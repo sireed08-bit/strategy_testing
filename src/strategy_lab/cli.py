@@ -6,10 +6,14 @@ from datetime import date, timedelta
 from pathlib import Path
 from collections import Counter
 
+from strategy_lab.alpaca_data import download_stock_bars_csv
 from strategy_lab.backtest import PriceBar, run_backtest
 from strategy_lab.batch_runner import run_backtest_batch
+from strategy_lab.encrypted_bundle import decrypt_file, encrypt_file, passphrase_from_env
 from strategy_lab.experiment_log import DuplicateExperimentError, ExperimentLog
+from strategy_lab.handoff import BatchRequest, create_result_bundle, write_batch_request
 from strategy_lab.jsonl_merge import merge_jsonl_files
+from strategy_lab.private_storage import initialize_private_storage
 from strategy_lab.reporting import write_markdown_report
 from strategy_lab.run_ledger import ResearchRunLedger, ResearchRunRecord
 from strategy_lab.scoring import score_metrics
@@ -85,6 +89,49 @@ def main() -> None:
     merge_parser.add_argument("--unique-key", required=True)
     merge_parser.add_argument("inputs", nargs="+")
 
+    storage_parser = subparsers.add_parser("init-private-storage")
+    storage_parser.add_argument("--root", required=True)
+
+    alpaca_parser = subparsers.add_parser("download-alpaca-bars")
+    alpaca_parser.add_argument("--symbols", required=True)
+    alpaca_parser.add_argument("--start", required=True)
+    alpaca_parser.add_argument("--end", required=True)
+    alpaca_parser.add_argument("--output", required=True)
+    alpaca_parser.add_argument("--timeframe", default="1Day")
+    alpaca_parser.add_argument("--feed", default="iex")
+
+    request_parser = subparsers.add_parser("write-batch-request")
+    request_parser.add_argument("--output", required=True)
+    request_parser.add_argument("--purpose", required=True)
+    request_parser.add_argument("--strategy-names", required=True)
+    request_parser.add_argument("--symbols", required=True)
+    request_parser.add_argument("--dataset-name", required=True)
+    request_parser.add_argument("--max-experiments", type=int, default=40)
+    request_parser.add_argument("--shard-count", type=int, default=4)
+
+    bundle_parser = subparsers.add_parser("create-result-bundle")
+    bundle_parser.add_argument("--output", required=True)
+    bundle_parser.add_argument("--manifest", required=True)
+    bundle_parser.add_argument("inputs", nargs="+")
+
+    encrypt_parser = subparsers.add_parser("encrypt-file")
+    encrypt_parser.add_argument("--input", required=True)
+    encrypt_parser.add_argument("--output", required=True)
+    encrypt_parser.add_argument(
+        "--passphrase-env",
+        default="STRATEGY_BUNDLE_PASSPHRASE",
+        help="Environment variable containing the encryption passphrase",
+    )
+
+    decrypt_parser = subparsers.add_parser("decrypt-file")
+    decrypt_parser.add_argument("--input", required=True)
+    decrypt_parser.add_argument("--output", required=True)
+    decrypt_parser.add_argument(
+        "--passphrase-env",
+        default="STRATEGY_BUNDLE_PASSPHRASE",
+        help="Environment variable containing the decryption passphrase",
+    )
+
     subparsers.add_parser("backtest-sample")
 
     args = parser.parse_args()
@@ -122,6 +169,60 @@ def main() -> None:
             unique_key=args.unique_key,
         )
         print(json.dumps({"merged": merged, "output": args.output}))
+    elif args.command == "init-private-storage":
+        layout = initialize_private_storage(Path(args.root))
+        print(
+            json.dumps(
+                {
+                    "root": str(layout.root),
+                    "directories": [str(item) for item in layout.directories],
+                },
+                indent=2,
+            )
+        )
+    elif args.command == "download-alpaca-bars":
+        rows = download_stock_bars_csv(
+            symbols=parse_csv_arg(args.symbols),
+            start=args.start,
+            end=args.end,
+            output_path=Path(args.output),
+            timeframe=args.timeframe,
+            feed=args.feed,
+        )
+        print(json.dumps({"rows": rows, "output": args.output}))
+    elif args.command == "write-batch-request":
+        request = BatchRequest(
+            purpose=args.purpose,
+            strategy_names=parse_csv_arg(args.strategy_names),
+            symbols=parse_csv_arg(args.symbols),
+            dataset_name=args.dataset_name,
+            max_experiments=args.max_experiments,
+            shard_count=args.shard_count,
+        )
+        written = write_batch_request(request, args.output)
+        print(json.dumps({"request_id": request.request_id, "output": str(written)}))
+    elif args.command == "create-result-bundle":
+        manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8-sig"))
+        written = create_result_bundle(
+            input_paths=[Path(item) for item in args.inputs],
+            output_path=Path(args.output),
+            manifest=manifest,
+        )
+        print(json.dumps({"bundle": str(written)}))
+    elif args.command == "encrypt-file":
+        written = encrypt_file(
+            input_path=Path(args.input),
+            output_path=Path(args.output),
+            passphrase=passphrase_from_env(args.passphrase_env),
+        )
+        print(json.dumps({"encrypted": str(written)}))
+    elif args.command == "decrypt-file":
+        written = decrypt_file(
+            input_path=Path(args.input),
+            output_path=Path(args.output),
+            passphrase=passphrase_from_env(args.passphrase_env),
+        )
+        print(json.dumps({"decrypted": str(written)}))
     elif args.command == "backtest-sample":
         backtest_sample()
 
@@ -249,6 +350,10 @@ def backtest_sample() -> None:
             indent=2,
         )
     )
+
+
+def parse_csv_arg(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 if __name__ == "__main__":

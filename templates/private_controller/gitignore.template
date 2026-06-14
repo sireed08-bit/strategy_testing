@@ -1,0 +1,12 @@
+.env
+.env.*
+data/
+reports/
+candidate_reviews/
+archives/
+inbox/
+outbox/
+*.zip
+*.encrypted
+*.age
+

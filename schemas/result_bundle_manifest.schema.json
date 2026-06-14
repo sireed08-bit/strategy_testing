@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Lab Result Bundle Manifest",
+  "type": "object",
+  "required": ["bundle_id", "created_at", "source", "contents", "sensitivity"],
+  "properties": {
+    "bundle_id": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "source": { "type": "string" },
+    "contents": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "sensitivity": {
+      "type": "string",
+      "enum": ["synthetic_public_safe", "private_research"]
+    }
+  },
+  "additionalProperties": true
+}
+

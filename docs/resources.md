@@ -6,6 +6,11 @@
 - Local JSONL experiment logs and research run ledgers.
 - Synthetic data generation for plumbing checks.
 - GitHub Actions workflows for tests and synthetic sharded research batches.
+- Alpaca IEX bar downloader that uses environment variables only.
+- Private storage initializer for a Google Drive synced folder.
+- Public-safe batch request and result bundle helpers.
+- Optional passphrase-based encryption for bundles that must cross public
+  infrastructure.
 
 ## Needed For Meaningful Research
 
@@ -27,6 +32,8 @@
 - A self-hosted runner if public GitHub Actions artifacts are not acceptable.
 - A private repository mirror for sensitive data, real reports, and long-lived
   experiment history.
+- External encryption tooling such as `age` or GPG if you prefer public-key
+  encryption over the built-in passphrase-based bundle encryption.
 
 ## Current Capacity
 

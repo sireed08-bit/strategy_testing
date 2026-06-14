@@ -30,6 +30,8 @@ exposure; they do not guarantee secrecy.
 - GitHub Actions workflows use read-only repository permissions.
 - The synthetic research workflow has a one-day artifact retention period.
 - No workflow uses broker secrets or real market data.
+- `private_controller/` is ignored so private-control scaffolding is not pushed
+  to the public worker repository.
 
 ## Recommended Deployment Practice
 
@@ -43,4 +45,3 @@ git diff --check
 
 Review every file staged for commit. If real data or private conclusions appear,
 remove them before pushing.
-

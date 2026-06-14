@@ -29,9 +29,13 @@ data/experiments/*.jsonl
 data/runs/*.jsonl
 reports/*.md
 artifacts/
+private_storage/
+/private_controller/
+*.bundle.zip
+*.encrypted
+*.age
 
 # Keep folder placeholders
 !data/experiments/.gitkeep
 !data/runs/.gitkeep
 !reports/.gitkeep
-

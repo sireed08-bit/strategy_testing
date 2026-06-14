@@ -1,0 +1,19 @@
+private_storage_root: "G:\\My Drive\\Strategy Research Lab"
+alpaca:
+  feed: iex
+  symbols:
+    - SPY
+    - QQQ
+    - IWM
+    - DIA
+  start: "2020-01-01"
+  end: "2026-01-01"
+public_worker:
+  repository: sireed08-bit/strategy_testing
+  max_parallel_shards: 4
+  max_experiments_per_shard: 10
+privacy:
+  keep_real_logs_private: true
+  keep_real_reports_private: true
+  public_worker_receives_sanitized_requests_only: true
+

@@ -41,6 +41,8 @@ results, remember what was already tried, and produce clear next-step reports.
   is still needed for meaningful research.
 - [Public Repository Hardening](docs/public_repo_hardening.md) explains the
   public-repo privacy limits and guardrails.
+- [Private/Public Split](docs/private_public_split.md) explains how the public
+  worker and private controller should share work.
 - `src/strategy_lab/` contains the initial reusable core for experiment specs,
   fingerprinting, scoring, experiment logs, run ledgers, reporting, and a small
   starter backtest engine.
@@ -77,6 +79,31 @@ Run a repeatable backtest batch that creates fresh strategy variations:
 python -m strategy_lab.cli run-backtest-batch --limit 20 --synthetic-days 756
 ```
 
+Initialize a private Google Drive-backed storage folder:
+
+```powershell
+python -m strategy_lab.cli init-private-storage --root "G:\My Drive\Strategy Research Lab"
+```
+
+Download Alpaca IEX bars into private storage:
+
+```powershell
+python -m strategy_lab.cli download-alpaca-bars --symbols SPY,QQQ,IWM,DIA --start 2020-01-01 --end 2026-01-01 --output "G:\My Drive\Strategy Research Lab\data\market_data\alpaca_iex_etfs.csv"
+```
+
+Create a public-safe batch request:
+
+```powershell
+python -m strategy_lab.cli write-batch-request --output "G:\My Drive\Strategy Research Lab\outbox\public_worker_requests\batch_request.json" --purpose "Public-safe synthetic validation" --strategy-names moving_average_cross,rsi_pullback --symbols SPY,QQQ --dataset-name synthetic_public_safe --max-experiments 40 --shard-count 4
+```
+
+Encrypt any bundle that may cross public infrastructure:
+
+```powershell
+$env:STRATEGY_BUNDLE_PASSPHRASE="use-a-long-private-passphrase"
+python -m strategy_lab.cli encrypt-file --input "G:\My Drive\Strategy Research Lab\outbox\public_worker_requests\bundle.zip" --output "G:\My Drive\Strategy Research Lab\outbox\public_worker_requests\bundle.zip.encrypted"
+```
+
 Score a metrics payload:
 
 ```powershell
@@ -102,3 +129,7 @@ implementations. The project now has a repeatable batch runner that can generate
 fresh strategy variations, skip duplicates, write experiment records, append one
 research run record, and produce a report. GitHub Actions can run synthetic
 research batches across four concurrent shards.
+
+For private work, use the public-safe `templates/private_controller/` scaffold
+as the starting point for a separate private repository. This local workspace
+also has an ignored `private_controller/` folder for your private-side setup.
