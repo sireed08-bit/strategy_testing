@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Local secrets and broker credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+alpaca*.json
+alpaca*.yaml
+secrets/
+
+# Local research data and generated artifacts
+data/raw/
+data/vendor/
+data/private/
+data/market_data/
+data/experiments/*.jsonl
+data/runs/*.jsonl
+reports/*.md
+artifacts/
+
+# Keep folder placeholders
+!data/experiments/.gitkeep
+!data/runs/.gitkeep
+!reports/.gitkeep
+

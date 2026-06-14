@@ -1,0 +1,113 @@
+name: Synthetic Research Batch
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit_per_shard:
+        description: "Maximum experiments per shard"
+        required: true
+        default: "10"
+      synthetic_days:
+        description: "Synthetic daily bars per shard"
+        required: true
+        default: "756"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synthetic-research-batch
+  cancel-in-progress: false
+
+jobs:
+  shard:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run synthetic research shard
+        run: >
+          python -m strategy_lab.cli run-backtest-batch
+          --experiment-log artifacts/shard-${{ matrix.shard }}/experiment_log.jsonl
+          --run-log artifacts/shard-${{ matrix.shard }}/research_runs.jsonl
+          --report artifacts/shard-${{ matrix.shard }}/latest.md
+          --purpose "GitHub Actions synthetic research shard ${{ matrix.shard }}"
+          --limit ${{ inputs.limit_per_shard }}
+          --synthetic-days ${{ inputs.synthetic_days }}
+          --shard-index ${{ matrix.shard }}
+          --shard-count 4
+
+      - name: Upload shard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-shard-${{ matrix.shard }}
+          path: artifacts/shard-${{ matrix.shard }}
+          retention-days: 1
+
+  merge:
+    runs-on: ubuntu-latest
+    needs: shard
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+
+      - name: Merge experiment logs
+        run: >
+          python -m strategy_lab.cli merge-jsonl
+          --output merged/experiment_log.jsonl
+          --unique-key fingerprint
+          downloaded/research-shard-0/experiment_log.jsonl
+          downloaded/research-shard-1/experiment_log.jsonl
+          downloaded/research-shard-2/experiment_log.jsonl
+          downloaded/research-shard-3/experiment_log.jsonl
+
+      - name: Merge run ledgers
+        run: >
+          python -m strategy_lab.cli merge-jsonl
+          --output merged/research_runs.jsonl
+          --unique-key run_id
+          downloaded/research-shard-0/research_runs.jsonl
+          downloaded/research-shard-1/research_runs.jsonl
+          downloaded/research-shard-2/research_runs.jsonl
+          downloaded/research-shard-3/research_runs.jsonl
+
+      - name: Build merged report
+        run: >
+          python -m strategy_lab.cli report
+          --log merged/experiment_log.jsonl
+          --output merged/latest.md
+
+      - name: Upload merged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-synthetic-research
+          path: merged
+          retention-days: 1
+

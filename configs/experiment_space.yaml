@@ -1,0 +1,30 @@
+version: 1
+strategies:
+  - family: trend_following
+    name: moving_average_cross
+    hypothesis: Medium-term trend alignment can capture persistent equity moves.
+    rules:
+      entry: fast_sma crosses above slow_sma
+      exit: fast_sma crosses below slow_sma
+    parameter_grid:
+      fast_sma: [10, 20, 50]
+      slow_sma: [100, 150, 200]
+    risk_grid:
+      position_size_pct: [20, 25]
+      stop_loss_pct: [8, 12, 16]
+    constraints:
+      - fast_sma_lt_slow_sma
+  - family: mean_reversion
+    name: rsi_pullback
+    hypothesis: Oversold pullbacks in liquid index ETFs may mean-revert.
+    rules:
+      entry: rsi below threshold and price above long_sma
+      exit: rsi recovers or max_hold_days reached
+    parameter_grid:
+      rsi_period: [7, 14, 21]
+      entry_rsi: [25, 30, 35]
+      exit_rsi: [45, 50, 55]
+    risk_grid:
+      position_size_pct: [15, 20]
+      max_hold_days: [5, 10, 15]
+

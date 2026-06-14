@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Lab Research Run Record",
+  "type": "object",
+  "required": [
+    "run_id",
+    "created_at",
+    "purpose",
+    "mode",
+    "status",
+    "experiment_log_path",
+    "report_path",
+    "experiments_attempted",
+    "experiments_created",
+    "experiments_skipped_duplicates",
+    "strategy_families",
+    "grade_counts",
+    "next_action"
+  ],
+  "properties": {
+    "run_id": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "purpose": { "type": "string" },
+    "mode": { "type": "string" },
+    "status": { "type": "string" },
+    "experiment_log_path": { "type": "string" },
+    "report_path": { "type": "string" },
+    "experiments_attempted": { "type": "integer", "minimum": 0 },
+    "experiments_created": { "type": "integer", "minimum": 0 },
+    "experiments_skipped_duplicates": { "type": "integer", "minimum": 0 },
+    "strategy_families": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "grade_counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "next_action": { "type": "string" },
+    "notes": { "type": "array", "items": { "type": "string" } },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}
+

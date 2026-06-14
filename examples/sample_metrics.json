@@ -1,0 +1,13 @@
+{
+  "annualized_return_pct": 12.4,
+  "max_drawdown_pct": 14.2,
+  "sharpe_ratio": 1.05,
+  "sortino_ratio": 1.42,
+  "profit_factor": 1.38,
+  "trade_count": 84,
+  "win_rate_pct": 53.1,
+  "exposure_pct": 46.0,
+  "regime_consistency": 0.68,
+  "robustness_score": 0.58
+}
+

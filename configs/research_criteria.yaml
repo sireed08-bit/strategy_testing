@@ -1,0 +1,53 @@
+version: 1
+grade_thresholds:
+  candidate: 80
+  promising: 65
+  watch: 45
+  reject: 0
+hard_rejects:
+  max_drawdown_pct_above: 35
+  trade_count_below: 20
+  profit_factor_below: 0.95
+weights:
+  annualized_return_pct: 0.20
+  max_drawdown_pct: 0.20
+  sharpe_ratio: 0.15
+  sortino_ratio: 0.10
+  profit_factor: 0.15
+  trade_count: 0.05
+  win_rate_pct: 0.05
+  exposure_pct: 0.05
+  regime_consistency: 0.03
+  robustness_score: 0.02
+metric_targets:
+  annualized_return_pct:
+    poor: 0
+    excellent: 20
+  max_drawdown_pct:
+    excellent: 8
+    poor: 35
+  sharpe_ratio:
+    poor: 0
+    excellent: 1.5
+  sortino_ratio:
+    poor: 0
+    excellent: 2.0
+  profit_factor:
+    poor: 1.0
+    excellent: 2.0
+  trade_count:
+    poor: 20
+    excellent: 200
+  win_rate_pct:
+    poor: 35
+    excellent: 60
+  exposure_pct:
+    poor: 100
+    excellent: 40
+  regime_consistency:
+    poor: 0
+    excellent: 1
+  robustness_score:
+    poor: 0
+    excellent: 1
+
