@@ -31,7 +31,7 @@ def _bootstrap_env() -> None:
         return
     try:
         from dotenv import load_dotenv  # type: ignore[import]
-        load_dotenv(env_file, override=False)
+        load_dotenv(env_file, override=True, encoding="utf-8-sig")
     except ImportError:
         pass  # python-dotenv not installed; caller must export env vars manually
 
@@ -54,7 +54,28 @@ _SYMBOLS = ["SPY", "QQQ", "IWM", "DIA"]
 
 
 def _env(key: str, default: str = "") -> str:
-    return os.environ.get(key, default)
+    return os.environ.get(key, default).strip()
+
+
+def _notify(title: str, message: str, priority: str = "default") -> None:
+    """Fire-and-forget push notification to ntfy.sh. Silently skipped if NTFY_TOPIC is unset."""
+    topic = _env("NTFY_TOPIC")
+    if not topic:
+        return
+    try:
+        req = urllib.request.Request(
+            f"https://ntfy.sh/{topic}",
+            data=message.encode(),
+            headers={
+                "Title": title,
+                "Priority": priority,
+                "Content-Type": "text/plain",
+            },
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass  # notifications are best-effort; never block the main response
 
 
 def _private_storage() -> Path:
@@ -230,6 +251,17 @@ def signals(limit: int = 10) -> dict:
         })
 
     active = [r for r in results if r["signal"] in ("entry", "exit")]
+    if active:
+        lines = "\n".join(
+            f"{r['signal'].upper()} — {r['strategy']} on {r['symbol']} "
+            f"(score={r['score']}, close=${r['last_close']})"
+            for r in active
+        )
+        _notify(
+            title=f"Strategy Lab — {len(active)} signal(s) on {results[0]['last_bar_date']}",
+            message=f"{lines}\n\nResearch signals only — not live trade recommendations.",
+            priority="high",
+        )
     return {
         "signals": results,
         "active_signals": active,
@@ -296,7 +328,21 @@ def run_all(limit: int = 400) -> dict:
             })
         except Exception as exc:
             results.append({"symbol": symbol, "status": "error", "error": str(exc)})
-    return {"runs": results, "timestamp": datetime.now(timezone.utc).isoformat()}
+    payload = {"runs": results, "timestamp": datetime.now(timezone.utc).isoformat()}
+    created_total = sum(r.get("experiments_created", 0) for r in results)
+    grades = Counter(r.get("grade") for r in ExperimentLog(_EXPERIMENT_LOG).records())
+    _notify(
+        title=f"Strategy Lab — batch complete ({date_str})",
+        message=(
+            f"{created_total} new experiments across {len(results)} symbols\n"
+            f"Candidates: {grades.get('candidate', 0)}  "
+            f"Promising: {grades.get('promising', 0)}  "
+            f"Watch: {grades.get('watch', 0)}  "
+            f"Rejects: {grades.get('reject', 0)}"
+        ),
+        priority="default",
+    )
+    return payload
 
 
 # ── refresh market data ───────────────────────────────────────────────────────
@@ -368,6 +414,11 @@ def suggest() -> dict:
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = json.loads(resp.read())
             text = data["choices"][0]["message"]["content"]
+            _notify(
+                title="Strategy Lab — research suggestions ready",
+                message=text[:1500],
+                priority="default",
+            )
             return {
                 "model": model,
                 "suggestion": text,
