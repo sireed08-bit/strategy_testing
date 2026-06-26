@@ -9,9 +9,9 @@ strategies:
     parameter_grid:
       fast_sma: [10, 20, 50]
       slow_sma: [100, 150, 200]
-    risk_grid:
-      position_size_pct: [20, 25]
-      stop_loss_pct: [8, 12, 16]
+    # risk_grid omitted: position_size_pct and stop_loss_pct are not yet enforced
+    # by simulate_long_only, so they only inflate the grid with identical results.
+    # Re-add once they actually affect the backtest.
     constraints:
       - fast_sma_lt_slow_sma
 
@@ -26,8 +26,9 @@ strategies:
       entry_rsi: [20, 25, 28, 30, 32, 35, 38, 40]
       exit_rsi: [50, 53, 55, 58, 60, 65]
       sma_filter: [50, 100, 200]
+    # position_size_pct dropped (inert until simulate_long_only scales by it).
+    # max_hold_days IS enforced and meaningfully changes results.
     risk_grid:
-      position_size_pct: [15, 20]
       max_hold_days: [5, 10, 15]
 
   - family: breakout
@@ -39,9 +40,7 @@ strategies:
     parameter_grid:
       entry_lookback: [20, 55, 100]
       exit_lookback: [10, 20, 40]
-    risk_grid:
-      position_size_pct: [15, 20]
-      stop_loss_pct: [8, 12]
+    # risk_grid omitted: position_size_pct and stop_loss_pct are not yet enforced.
     constraints:
       - exit_lookback_lt_entry_lookback
 
@@ -55,8 +54,7 @@ strategies:
       contraction_days: [10, 20, 40]
       breakout_days: [5, 10, 20]
       atr_period: [10, 14, 20]
-    risk_grid:
-      position_size_pct: [15, 20]
+    # risk_grid omitted: position_size_pct is not yet enforced.
 
   - family: risk_on_risk_off
     name: spy_tlt_regime_switch
@@ -66,8 +64,7 @@ strategies:
       exit: price below moving average (risk off, hold cash)
     parameter_grid:
       trend_sma: [100, 150, 200]
-    risk_grid:
-      position_size_pct: [50, 75, 100]
+    # risk_grid omitted: position_size_pct is not yet enforced.
 
   - family: momentum
     name: relative_strength_rotation
@@ -78,8 +75,7 @@ strategies:
     parameter_grid:
       lookback_days: [63, 126, 252]
       rebalance_days: [21, 42, 63]
-    risk_grid:
-      position_size_pct: [25, 50]
+    # risk_grid omitted: position_size_pct is not yet enforced.
 
   - family: sector_rotation
     name: sector_momentum_leadership
@@ -90,5 +86,4 @@ strategies:
     parameter_grid:
       lookback_days: [63, 90, 126]
       rebalance_days: [21, 42, 63]
-    risk_grid:
-      position_size_pct: [25, 33]
+    # risk_grid omitted: position_size_pct is not yet enforced.
