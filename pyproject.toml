@@ -16,9 +16,17 @@ dependencies = [
 strategy-lab = "strategy_lab.cli:main"
 
 [project.optional-dependencies]
+server = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.28",
+  "python-dotenv>=1.0",
+]
 dev = [
   "pytest>=8.0",
-  "jsonschema>=4.0"
+  "jsonschema>=4.0",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.28",
+  "python-dotenv>=1.0",
 ]
 
 [tool.setuptools.packages.find]

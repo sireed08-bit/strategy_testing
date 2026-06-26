@@ -1,0 +1,251 @@
+{
+  "name": "Strategy Research — Weekly Autonomous Run",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [1],
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "11111111-0000-0000-0000-000000000001",
+      "name": "Weekly Monday 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/health",
+        "options": {}
+      },
+      "id": "11111111-0000-0000-0000-000000000002",
+      "name": "Health Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "value2": "ok"
+            }
+          ]
+        }
+      },
+      "id": "11111111-0000-0000-0000-000000000003",
+      "name": "Server Up?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/refresh-data",
+        "method": "POST",
+        "options": {}
+      },
+      "id": "11111111-0000-0000-0000-000000000004",
+      "name": "Refresh Market Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 220]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/run-all",
+        "method": "POST",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "400"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 3600000
+        }
+      },
+      "id": "11111111-0000-0000-0000-000000000005",
+      "name": "Run All Symbols",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 220]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/suggest",
+        "method": "POST",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "11111111-0000-0000-0000-000000000006",
+      "name": "Get AI Suggestions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1340, 220]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/sync-private",
+        "method": "POST",
+        "options": {}
+      },
+      "id": "11111111-0000-0000-0000-000000000007",
+      "name": "Sync Private Repo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1560, 220]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/status",
+        "options": {}
+      },
+      "id": "11111111-0000-0000-0000-000000000008",
+      "name": "Get Final Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1780, 220]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-summary",
+              "name": "summary",
+              "value": "=🔬 Strategy Lab Weekly Run Complete\n\nDate: {{ new Date().toISOString().split('T')[0] }}\nTotal experiments: {{ $json.total_experiments }}\n\n📊 Grades:\n  Candidates: {{ $json.candidates }}\n  Promising:  {{ $json.promising }}\n  Watch:      {{ $json.watch }}\n  Rejects:    {{ $json.rejects }}\n\nLast run: {{ $json.last_run_at }}\n\n💡 AI Suggestions:\n{{ $('Get AI Suggestions').item.json.suggestion }}\n\nModel used: {{ $('Get AI Suggestions').item.json.model }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11111111-0000-0000-0000-000000000009",
+      "name": "Format Summary",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2000, 220]
+    },
+    {
+      "parameters": {},
+      "id": "11111111-0000-0000-0000-000000000010",
+      "name": "→ Add Notification Here",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2220, 220],
+      "notes": "Connect an Email, Slack, Telegram, or webhook node here.\nThe summary text is in {{ $json.summary }}.\n\nExample: Gmail node → To: you@example.com, Subject: Strategy Lab Weekly, Body: {{ $json.summary }}"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-error",
+              "name": "error",
+              "value": "=⚠️ Strategy Lab server is DOWN\n\nDate: {{ new Date().toISOString() }}\n\nThe weekly research run was skipped because the server did not respond.\n\nStart the server:\n  py -3.12 -m uvicorn strategy_lab.server:app --host 127.0.0.1 --port 8078\n\nThen trigger this workflow manually to catch up.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11111111-0000-0000-0000-000000000011",
+      "name": "Server Down Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {},
+      "id": "11111111-0000-0000-0000-000000000012",
+      "name": "→ Alert Notification Here",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1120, 400],
+      "notes": "Connect the same notification node as the success path.\nAlert text is in {{ $json.error }}."
+    }
+  ],
+  "connections": {
+    "Weekly Monday 9am": {
+      "main": [
+        [{"node": "Health Check", "type": "main", "index": 0}]
+      ]
+    },
+    "Health Check": {
+      "main": [
+        [{"node": "Server Up?", "type": "main", "index": 0}]
+      ]
+    },
+    "Server Up?": {
+      "main": [
+        [{"node": "Refresh Market Data", "type": "main", "index": 0}],
+        [{"node": "Server Down Alert", "type": "main", "index": 0}]
+      ]
+    },
+    "Refresh Market Data": {
+      "main": [
+        [{"node": "Run All Symbols", "type": "main", "index": 0}]
+      ]
+    },
+    "Run All Symbols": {
+      "main": [
+        [{"node": "Get AI Suggestions", "type": "main", "index": 0}]
+      ]
+    },
+    "Get AI Suggestions": {
+      "main": [
+        [{"node": "Sync Private Repo", "type": "main", "index": 0}]
+      ]
+    },
+    "Sync Private Repo": {
+      "main": [
+        [{"node": "Get Final Status", "type": "main", "index": 0}]
+      ]
+    },
+    "Get Final Status": {
+      "main": [
+        [{"node": "Format Summary", "type": "main", "index": 0}]
+      ]
+    },
+    "Format Summary": {
+      "main": [
+        [{"node": "→ Add Notification Here", "type": "main", "index": 0}]
+      ]
+    },
+    "Server Down Alert": {
+      "main": [
+        [{"node": "→ Alert Notification Here", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "strategy-lab-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {"name": "strategy-lab"},
+    {"name": "autonomous"}
+  ]
+}
