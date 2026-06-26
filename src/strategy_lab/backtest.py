@@ -50,6 +50,7 @@ def build_signals(strategy: StrategySpec, closes: list[float]) -> list[bool]:
         period = int(strategy.parameters["rsi_period"])
         entry_rsi = float(strategy.parameters["entry_rsi"])
         exit_rsi = float(strategy.parameters["exit_rsi"])
+        sma_filter = int(strategy.parameters.get("sma_filter", 0))
         rsi_signals: list[bool] = []
         in_position = False
         for index in range(len(closes)):
@@ -57,7 +58,8 @@ def build_signals(strategy: StrategySpec, closes: list[float]) -> list[bool]:
             if value is None:
                 rsi_signals.append(False)
                 continue
-            if not in_position and value <= entry_rsi:
+            above_trend = sma_filter == 0 or closes[index] > sma(closes, index, sma_filter)
+            if not in_position and value <= entry_rsi and above_trend:
                 in_position = True
             elif in_position and value >= exit_rsi:
                 in_position = False

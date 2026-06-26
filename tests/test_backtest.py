@@ -75,6 +75,30 @@ def test_run_backtest_rsi_pullback_returns_all_metrics() -> None:
     assert set(metrics) == EXPECTED_METRIC_KEYS
 
 
+def test_run_backtest_rsi_pullback_sma_filter_never_increases_trades() -> None:
+    bars = _volatile_bars()
+    base = StrategySpec(
+        family="mean_reversion",
+        name="rsi_pullback",
+        hypothesis="RSI pullback, no filter.",
+        rules={},
+        parameters={"rsi_period": 14, "entry_rsi": 35, "exit_rsi": 55, "sma_filter": 0},
+        risk_model={"position_size_pct": 15, "max_hold_days": 5},
+    )
+    filtered = StrategySpec(
+        family="mean_reversion",
+        name="rsi_pullback",
+        hypothesis="RSI pullback with 200-day SMA trend filter.",
+        rules={},
+        parameters={"rsi_period": 14, "entry_rsi": 35, "exit_rsi": 55, "sma_filter": 200},
+        risk_model={"position_size_pct": 15, "max_hold_days": 5},
+    )
+    base_metrics = run_backtest(base, bars)
+    filtered_metrics = run_backtest(filtered, bars)
+    assert set(filtered_metrics) == EXPECTED_METRIC_KEYS
+    assert filtered_metrics["trade_count"] <= base_metrics["trade_count"]
+
+
 def test_run_backtest_donchian_breakout_returns_all_metrics() -> None:
     strategy = StrategySpec(
         family="breakout",
