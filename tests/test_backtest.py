@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from strategy_lab.backtest import PriceBar, run_backtest
+from strategy_lab.backtest import PriceBar, build_signals, run_backtest
 from strategy_lab.models import StrategySpec
 from strategy_lab.strategy_ideas import seed_strategy_specs
 
@@ -97,6 +97,38 @@ def test_run_backtest_rsi_pullback_sma_filter_never_increases_trades() -> None:
     filtered_metrics = run_backtest(filtered, bars)
     assert set(filtered_metrics) == EXPECTED_METRIC_KEYS
     assert filtered_metrics["trade_count"] <= base_metrics["trade_count"]
+
+
+def test_rsi_pullback_max_hold_days_caps_holding_period() -> None:
+    """A max_hold_days cap must force exits no later than N bars after entry."""
+    closes = [100.0 - day for day in range(40)]  # steady decline: RSI stays oversold, never recovers
+
+    def hold_run_lengths(max_hold_days: int) -> list[int]:
+        spec = StrategySpec(
+            family="mean_reversion",
+            name="rsi_pullback",
+            hypothesis="",
+            rules={},
+            parameters={"rsi_period": 5, "entry_rsi": 40, "exit_rsi": 60, "sma_filter": 0},
+            risk_model={"max_hold_days": max_hold_days},
+        )
+        signals = build_signals(spec, closes)
+        runs: list[int] = []
+        current = 0
+        for flag in signals:
+            if flag:
+                current += 1
+            elif current:
+                runs.append(current)
+                current = 0
+        if current:
+            runs.append(current)
+        return runs
+
+    # With no exit_rsi recovery possible, an uncapped run holds for many bars...
+    assert max(hold_run_lengths(max_hold_days=0)) > 5
+    # ...but a 5-day cap means no single position is ever held longer than 5 bars.
+    assert max(hold_run_lengths(max_hold_days=5)) <= 5
 
 
 def test_run_backtest_donchian_breakout_returns_all_metrics() -> None:

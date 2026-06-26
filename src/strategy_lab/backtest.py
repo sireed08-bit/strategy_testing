@@ -51,18 +51,26 @@ def build_signals(strategy: StrategySpec, closes: list[float]) -> list[bool]:
         entry_rsi = float(strategy.parameters["entry_rsi"])
         exit_rsi = float(strategy.parameters["exit_rsi"])
         sma_filter = int(strategy.parameters.get("sma_filter", 0))
+        max_hold_days = int(strategy.risk_model.get("max_hold_days", 0))
         rsi_signals: list[bool] = []
         in_position = False
+        days_held = 0
         for index in range(len(closes)):
             value = rsi(closes, index, period)
             if value is None:
                 rsi_signals.append(False)
                 continue
-            above_trend = sma_filter == 0 or closes[index] > sma(closes, index, sma_filter)
-            if not in_position and value <= entry_rsi and above_trend:
-                in_position = True
-            elif in_position and value >= exit_rsi:
-                in_position = False
+            if in_position:
+                days_held += 1
+                forced_exit = max_hold_days > 0 and days_held >= max_hold_days
+                if value >= exit_rsi or forced_exit:
+                    in_position = False
+                    days_held = 0
+            else:
+                above_trend = sma_filter == 0 or closes[index] > sma(closes, index, sma_filter)
+                if value <= entry_rsi and above_trend:
+                    in_position = True
+                    days_held = 0
             rsi_signals.append(in_position)
         return rsi_signals
 
