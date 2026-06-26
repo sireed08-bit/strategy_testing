@@ -51,6 +51,7 @@ _EXPERIMENT_LOG = _ROOT / "data" / "experiments" / "experiment_log.jsonl"
 _RUN_LOG = _ROOT / "data" / "runs" / "research_runs.jsonl"
 _REPORT = _ROOT / "reports" / "latest.md"
 _SYMBOLS = ["SPY", "QQQ", "IWM", "DIA"]
+_SCANNER_CSV_NAME = "scanner_universe_bars.csv"
 
 
 def _env(key: str, default: str = "") -> str:
@@ -513,6 +514,101 @@ Provide 4-6 specific, evidence-based research suggestions. For each:
 Focus on achieving the first candidate-grade result (score ≥ 80). Be concrete — \
 cite specific parameter values, thresholds, or data decisions. Do not repeat \
 what has already been exhaustively tested in the results above."""
+
+
+# ── market scanner ────────────────────────────────────────────────────────────
+
+def _scanner_universe() -> list[str]:
+    override = _env("SCANNER_UNIVERSE")
+    if override:
+        return [s.strip().upper() for s in override.split(",") if s.strip()]
+    from strategy_lab.scanner import load_universe
+    return load_universe()
+
+
+def _scanner_csv() -> Path:
+    return _private_storage() / "data" / "market_data" / _SCANNER_CSV_NAME
+
+
+def _load_universe_bars() -> dict:
+    """Load OHLCV bars for every universe symbol present in the scanner CSV."""
+    csv = _scanner_csv()
+    if not csv.exists():
+        raise HTTPException(500, f"Scanner data not found at {csv}. Call /scan-refresh first.")
+    bars_by_symbol: dict = {}
+    for symbol in _scanner_universe():
+        try:
+            bars, _ = load_price_bars_from_csv(csv, symbol)
+            bars_by_symbol[symbol] = bars
+        except ValueError:
+            continue  # symbol not in CSV (e.g. data fetch failed for it)
+    if not bars_by_symbol:
+        raise HTTPException(500, "No universe symbols found in scanner CSV.")
+    return bars_by_symbol
+
+
+@app.post("/scan-refresh")
+def scan_refresh(start: str = "2022-01-01") -> dict:
+    """Download OHLCV bars for the full scanner universe."""
+    universe = _scanner_universe()
+    output = _scanner_csv()
+    end = datetime.now(timezone.utc).date().isoformat()
+    try:
+        creds = credentials_from_env()
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc))
+    try:
+        rows = download_stock_bars_csv(
+            symbols=universe, start=start, end=end, output_path=output, credentials=creds,
+        )
+        return {"status": "ok", "symbols": len(universe), "rows_written": rows, "path": str(output)}
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.get("/evaluate-indicators")
+def evaluate_indicators(horizon: int = 5) -> dict:
+    """Rank every indicator by predictive edge (Information Coefficient)."""
+    from strategy_lab.indicator_eval import evaluate_all_indicators
+
+    bars_by_symbol = _load_universe_bars()
+    results = evaluate_all_indicators(bars_by_symbol, primary_horizon=horizon)
+    return {
+        "universe_size": len(bars_by_symbol),
+        "primary_horizon": horizon,
+        "indicators": results,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/scan")
+def scan(top_n: int = 20, min_abs_ic: float = 0.03, horizon: int = 5) -> dict:
+    """Cross-sectionally rank the universe and emit a watchlist."""
+    from strategy_lab.scanner import scan_universe
+
+    bars_by_symbol = _load_universe_bars()
+    result = scan_universe(
+        bars_by_symbol, min_abs_ic=min_abs_ic, top_n=top_n, horizon=horizon
+    )
+    watchlist = result["watchlist"]
+    if watchlist:
+        lines = "\n".join(
+            f"{i + 1}. {row['symbol']} (composite={row['composite']})"
+            for i, row in enumerate(watchlist[:10])
+        )
+        used = ", ".join(result["indicators_used"].keys())
+        _notify(
+            title=f"Market Scanner — top {min(10, len(watchlist))} of {len(bars_by_symbol)}",
+            message=f"Indicators: {used}\n\n{lines}\n\nResearch scan only — not trade advice.",
+            priority="default",
+        )
+    return {
+        "universe_size": len(bars_by_symbol),
+        "watchlist": watchlist,
+        "indicators_used": result["indicators_used"],
+        "note": result.get("note"),
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # ── sync private state repo ───────────────────────────────────────────────────

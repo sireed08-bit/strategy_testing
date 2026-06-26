@@ -39,3 +39,6 @@ private_storage/
 !data/experiments/.gitkeep
 !data/runs/.gitkeep
 !reports/.gitkeep
+
+# Runtime server logs
+logs/

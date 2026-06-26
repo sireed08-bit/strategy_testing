@@ -1,0 +1,68 @@
+# Market-scanner universe. The cross-sectional scanner ranks these symbols
+# against each other each day. Override at runtime with the SCANNER_UNIVERSE
+# env var (comma-separated) for a different list without editing this file.
+#
+# Default: sector SPDRs + broad-index ETFs + the most liquid large caps, which
+# gives the scanner a diversified cross-section to rank. Expand toward the full
+# S&P 500 once you confirm IEX data coverage and rate limits are comfortable.
+symbols:
+  # Broad index / style ETFs
+  - SPY
+  - QQQ
+  - IWM
+  - DIA
+  - VTV
+  - VUG
+  # Sector SPDRs
+  - XLK
+  - XLF
+  - XLE
+  - XLV
+  - XLI
+  - XLY
+  - XLP
+  - XLU
+  - XLB
+  - XLRE
+  - XLC
+  # Mega-cap / liquid single names
+  - AAPL
+  - MSFT
+  - NVDA
+  - AMZN
+  - GOOGL
+  - META
+  - TSLA
+  - AVGO
+  - JPM
+  - V
+  - MA
+  - UNH
+  - HD
+  - PG
+  - JNJ
+  - XOM
+  - CVX
+  - KO
+  - PEP
+  - COST
+  - WMT
+  - BAC
+  - DIS
+  - NFLX
+  - AMD
+  - INTC
+  - CRM
+  - ORCL
+  - ADBE
+  - QCOM
+  - CSCO
+  - PFE
+  - MRK
+  - ABBV
+  - TMO
+  - ACN
+  - MCD
+  - NKE
+  - LIN
+  - TXN
