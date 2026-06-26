@@ -22,10 +22,13 @@ strategies:
       entry: rsi below threshold and price above long_sma (if sma_filter > 0)
       exit: rsi recovers or max_hold_days reached
     parameter_grid:
+      # entry_rsi/exit_rsi/sma_filter extended past 40/65/200 — the v4 promising
+      # results on QQQ/IWM clustered on those grid boundaries, a sign the true
+      # optimum lies beyond the original grid. New values add fresh combos only.
       rsi_period: [7, 10, 12, 14, 16, 21, 28]
-      entry_rsi: [20, 25, 28, 30, 32, 35, 38, 40]
-      exit_rsi: [50, 53, 55, 58, 60, 65]
-      sma_filter: [50, 100, 200]
+      entry_rsi: [20, 25, 28, 30, 32, 35, 38, 40, 42, 45]
+      exit_rsi: [50, 53, 55, 58, 60, 65, 70]
+      sma_filter: [50, 100, 200, 250, 300]
     # position_size_pct dropped (inert until simulate_long_only scales by it).
     # max_hold_days IS enforced and meaningfully changes results.
     risk_grid:
