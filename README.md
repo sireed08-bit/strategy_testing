@@ -145,6 +145,14 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
+If the Windows `python` alias points to an environment without `pip`, use a
+specific Python launcher runtime instead:
+
+```powershell
+py -3.14 -m pip install -e ".[dev]"
+py -3.14 -m pytest
+```
+
 Run safe API-free smoke checks:
 
 ```powershell
@@ -154,6 +162,9 @@ $tmp = Join-Path $env:TEMP "strategy_lab_smoke"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 python -m strategy_lab.cli run-backtest-batch --experiment-log (Join-Path $tmp "experiment_log.jsonl") --run-log (Join-Path $tmp "research_runs.jsonl") --report (Join-Path $tmp "latest.md") --limit 3 --synthetic-days 260 --purpose "New computer smoke test"
 ```
+
+When using the launcher fallback, replace `python` with `py -3.14` in the smoke
+commands.
 
 Restore private project state from the private repo:
 

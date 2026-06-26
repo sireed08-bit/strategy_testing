@@ -15,10 +15,23 @@ Set-Location strategy_testing
 python -m pip install -e ".[dev]"
 ```
 
+If `python` points to an environment without `pip`, use a specific Windows
+launcher runtime:
+
+```powershell
+py -3.14 -m pip install -e ".[dev]"
+```
+
 Run tests:
 
 ```powershell
 python -m pytest
+```
+
+Fallback:
+
+```powershell
+py -3.14 -m pytest
 ```
 
 Run API-free smoke checks:
@@ -30,6 +43,8 @@ $tmp = Join-Path $env:TEMP "strategy_lab_smoke"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 python -m strategy_lab.cli run-backtest-batch --experiment-log (Join-Path $tmp "experiment_log.jsonl") --run-log (Join-Path $tmp "research_runs.jsonl") --report (Join-Path $tmp "latest.md") --limit 3 --synthetic-days 260 --purpose "New computer smoke test"
 ```
+
+Fallback: replace `python` with `py -3.14`.
 
 ## Ignored Private Files
 
@@ -93,4 +108,3 @@ market data, or account identifiers to either repository.
 The public repository is visible to indexers and bots. Keep the public repo for
 generic code and synthetic or sanitized examples only. Keep real state, durable
 logs, and meaningful research reports in the private repo or private storage.
-
