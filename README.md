@@ -52,7 +52,7 @@ results, remember what was already tried, and produce clear next-step reports.
 Install in editable mode:
 
 ```powershell
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
 Run tests:
@@ -133,3 +133,46 @@ research batches across four concurrent shards.
 For private work, use the public-safe `templates/private_controller/` scaffold
 as the starting point for a separate private repository. This local workspace
 also has an ignored `private_controller/` folder for your private-side setup.
+
+## New Computer Setup
+
+Clone and install the public worker repo:
+
+```powershell
+git clone https://github.com/sireed08-bit/strategy_testing.git
+Set-Location strategy_testing
+python -m pip install -e ".[dev]"
+python -m pytest
+```
+
+Run safe API-free smoke checks:
+
+```powershell
+python -m strategy_lab.cli score --metrics examples/sample_metrics.json
+python -m strategy_lab.cli backtest-sample
+$tmp = Join-Path $env:TEMP "strategy_lab_smoke"
+New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+python -m strategy_lab.cli run-backtest-batch --experiment-log (Join-Path $tmp "experiment_log.jsonl") --run-log (Join-Path $tmp "research_runs.jsonl") --report (Join-Path $tmp "latest.md") --limit 3 --synthetic-days 260 --purpose "New computer smoke test"
+```
+
+Restore private project state from the private repo:
+
+```powershell
+git clone https://github.com/sireed08-bit/strategy_testing_private_state.git
+Copy-Item -Recurse -Force strategy_testing_private_state\data strategy_testing\
+Copy-Item -Recurse -Force strategy_testing_private_state\reports strategy_testing\
+Copy-Item -Recurse -Force strategy_testing_private_state\private_controller strategy_testing\
+```
+
+The following local files are intentionally ignored by the public repo and are
+stored only in the private state repo:
+
+- `data/experiments/experiment_log.jsonl`
+- `data/runs/research_runs.jsonl`
+- `reports/latest.md`
+- `private_controller/`
+
+The public repo is visible at
+`https://github.com/sireed08-bit/strategy_testing` and is PUBLIC. Do not commit
+secrets, raw private market data, `.env` files, broker credentials, or real
+private research results to it.
