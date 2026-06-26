@@ -42,6 +42,7 @@ class ExperimentRecord:
     fingerprint: str
     weaknesses: list[str] = field(default_factory=list)
     next_action: str = ""
+    validation: dict[str, Any] = field(default_factory=dict)
     revisit: dict[str, Any] = field(default_factory=lambda: {"allowed": False})
     experiment_id: str = field(default_factory=lambda: str(uuid4()))
     created_at: str = field(
@@ -61,6 +62,7 @@ class ExperimentRecord:
             "conclusion": self.conclusion,
             "weaknesses": self.weaknesses,
             "next_action": self.next_action,
+            "validation": self.validation,
             "revisit": self.revisit,
         }
 

@@ -12,16 +12,34 @@ class PriceBar:
     date: str
     symbol: str
     close: float
+    # OHLCV fields are optional so synthetic data and close-only CSVs keep working.
+    # When present (real Alpaca data), they unlock true-range ATR, volume, and
+    # gap-based indicators used by the market scanner.
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    volume: float | None = None
+    vwap: float | None = None
 
 
-def run_backtest(strategy: StrategySpec, bars: list[PriceBar]) -> dict[str, float]:
+# Per-side transaction cost assumption in basis points (5 bps = 0.05%). Applied
+# on both entry and exit. Liquid large-cap ETFs trade tighter than this, so it is
+# a deliberately conservative haircut to avoid rewarding cost-blind churn.
+COST_BPS = 5.0
+
+
+def run_backtest(
+    strategy: StrategySpec,
+    bars: list[PriceBar],
+    cost_bps: float = COST_BPS,
+) -> dict[str, float]:
     if not bars:
         raise ValueError("Backtest needs at least one price bar.")
 
     ordered = sorted(bars, key=lambda bar: bar.date)
     closes = [bar.close for bar in ordered]
     signals = build_signals(strategy, closes)
-    equity_curve, daily_returns, trades = simulate_long_only(closes, signals)
+    equity_curve, daily_returns, trades = simulate_long_only(closes, signals, cost_bps)
 
     return {
         "annualized_return_pct": annualized_return_pct(equity_curve),
@@ -163,7 +181,20 @@ def build_signals(strategy: StrategySpec, closes: list[float]) -> list[bool]:
 def simulate_long_only(
     closes: list[float],
     signals: list[bool],
+    cost_bps: float = 0.0,
 ) -> tuple[list[float], list[float], list[float]]:
+    """
+    Long-only equity simulation with realistic execution.
+
+    - T+1 entry: a signal decided on bar t takes effect on bar t+1, so the bar
+      that defines a signal is never also the bar it is acted on (no look-ahead).
+    - Transaction cost: cost_bps basis points are deducted on each entry and exit,
+      folded into both the equity curve and daily returns so every metric is net.
+    """
+    cost = cost_bps / 10_000.0
+    # Shift signals forward one bar to enforce T+1 execution.
+    effective = ([False] + signals[:-1]) if signals else []
+
     equity = 1.0
     equity_curve = [equity]
     daily_returns: list[float] = []
@@ -171,26 +202,30 @@ def simulate_long_only(
     entry_price: float | None = None
 
     for index in range(1, len(closes)):
-        was_in_position = signals[index - 1]
-        is_in_position = signals[index]
+        was_in_position = effective[index - 1]
+        is_in_position = effective[index]
+
+        bar_return = 0.0
+        if was_in_position:
+            bar_return = closes[index] / closes[index - 1] - 1.0
 
         if not was_in_position and is_in_position:
             entry_price = closes[index]
-
-        period_return = 0.0
-        if was_in_position:
-            period_return = closes[index] / closes[index - 1] - 1.0
-            equity *= 1.0 + period_return
+            bar_return -= cost  # pay entry cost on the bar we enter
 
         if was_in_position and not is_in_position and entry_price is not None:
-            trades.append(closes[index] / entry_price - 1.0)
+            gross = closes[index] / entry_price - 1.0
+            trades.append((1.0 + gross) * (1.0 - cost) ** 2 - 1.0)  # round-trip net
+            bar_return -= cost  # pay exit cost on the bar we exit
             entry_price = None
 
-        daily_returns.append(period_return)
+        equity *= 1.0 + bar_return
+        daily_returns.append(bar_return)
         equity_curve.append(equity)
 
-    if signals[-1] and entry_price is not None:
-        trades.append(closes[-1] / entry_price - 1.0)
+    if effective and effective[-1] and entry_price is not None:
+        gross = closes[-1] / entry_price - 1.0
+        trades.append((1.0 + gross) * (1.0 - cost) ** 2 - 1.0)
 
     return equity_curve, daily_returns, trades
 

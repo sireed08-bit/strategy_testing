@@ -1,5 +1,7 @@
-from strategy_lab.batch_runner import run_backtest_batch
+from strategy_lab.backtest import PriceBar
+from strategy_lab.batch_runner import out_of_sample_validation, run_backtest_batch
 from strategy_lab.experiment_log import ExperimentLog
+from strategy_lab.models import StrategySpec
 from strategy_lab.run_ledger import ResearchRunLedger
 
 
@@ -30,6 +32,44 @@ def test_run_backtest_batch_creates_fresh_records_and_ledger_entry(tmp_path) -> 
     assert len(ExperimentLog(experiment_log).records()) == 6
     assert len(ResearchRunLedger(run_log).records()) == 2
     assert report.exists()
+
+
+def test_out_of_sample_validation_reports_train_and_test_scores() -> None:
+    from datetime import date, timedelta
+
+    start = date(2021, 1, 1)
+    bars = [
+        PriceBar(date=(start + timedelta(days=d)).isoformat(), symbol="SPY", close=100.0 + d * 0.3)
+        for d in range(400)
+    ]
+    strategy = StrategySpec(
+        family="mean_reversion",
+        name="rsi_pullback",
+        hypothesis="",
+        rules={},
+        parameters={"rsi_period": 14, "entry_rsi": 35, "exit_rsi": 55, "sma_filter": 0},
+        risk_model={"max_hold_days": 10},
+    )
+    validation, weaknesses = out_of_sample_validation(strategy, bars)
+    assert validation["status"] in {"evaluated", "inconclusive_few_oos_trades"}
+    assert "train_score" in validation
+    assert "oos_score" in validation
+    assert isinstance(weaknesses, list)
+
+
+def test_out_of_sample_validation_flags_insufficient_data() -> None:
+    bars = [PriceBar(date=f"2021-01-{d:02d}", symbol="SPY", close=100.0 + d) for d in range(1, 20)]
+    strategy = StrategySpec(
+        family="mean_reversion",
+        name="rsi_pullback",
+        hypothesis="",
+        rules={},
+        parameters={"rsi_period": 14, "entry_rsi": 35, "exit_rsi": 55, "sma_filter": 0},
+        risk_model={"max_hold_days": 10},
+    )
+    validation, weaknesses = out_of_sample_validation(strategy, bars)
+    assert validation["status"] == "insufficient_data"
+    assert weaknesses == []
 
 
 def test_run_backtest_batch_can_run_distinct_shards(tmp_path) -> None:

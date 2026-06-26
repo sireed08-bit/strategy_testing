@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from strategy_lab.backtest import run_backtest
+from strategy_lab.backtest import PriceBar, run_backtest
 from strategy_lab.data_loader import load_price_bars_from_csv, synthetic_price_bars
 from strategy_lab.experiment_generator import fresh_strategy_variations
 from strategy_lab.experiment_log import DuplicateExperimentError, ExperimentLog
@@ -49,16 +49,27 @@ def run_backtest_batch(
         try:
             metrics = run_backtest(strategy, bars)
             result = score_metrics(metrics)
+            validation, oos_weaknesses = out_of_sample_validation(strategy, bars)
+            grade = result.grade
+            weaknesses = list(result.weaknesses) + oos_weaknesses
+            # Out-of-sample failure demotes the grade: a result that looks good on
+            # the full history but collapses on held-out data is overfit, not real.
+            if oos_weaknesses:
+                if any("fails out-of-sample" in w for w in oos_weaknesses):
+                    grade = "reject"
+                else:
+                    grade = _demote_to_watch(grade)
             record = ExperimentRecord(
                 strategy=strategy,
                 dataset=dataset,
                 metrics=metrics,
                 score=result.score,
-                grade=result.grade,
-                conclusion=conclusion_for_grade(result.grade),
+                grade=grade,
+                conclusion=conclusion_for_grade(grade),
                 fingerprint=experiment_fingerprint(strategy, dataset),
-                weaknesses=result.weaknesses,
-                next_action=next_action_for_grade(result.grade),
+                weaknesses=weaknesses,
+                next_action=next_action_for_grade(grade),
+                validation=validation,
             )
             experiment_log.append(record)
             created += 1
@@ -96,6 +107,58 @@ def run_backtest_batch(
     )
     ResearchRunLedger(run_log_path).append(run_record)
     return run_record
+
+
+# ── out-of-sample validation ──────────────────────────────────────────────────
+# Optimize/observe on the first TRAIN_FRACTION of history, then judge on the
+# held-out remainder the parameter scan never saw. This is the primary defence
+# against data-snooping: with thousands of parameter sets scored on one price
+# path, the top scorers are likely lucky fits unless they survive unseen data.
+TRAIN_FRACTION = 0.7
+MIN_OOS_TRADES = 5          # below this, the test window is too quiet to judge
+MAX_OOS_DEGRADATION = 25.0  # in-sample minus out-of-sample score points
+_MIN_SEGMENT_BARS = 60
+
+
+def out_of_sample_validation(
+    strategy: StrategySpec,
+    bars: list[PriceBar],
+) -> tuple[dict, list[str]]:
+    ordered = sorted(bars, key=lambda bar: bar.date)
+    split = int(len(ordered) * TRAIN_FRACTION)
+    train, test = ordered[:split], ordered[split:]
+    if len(train) < _MIN_SEGMENT_BARS or len(test) < _MIN_SEGMENT_BARS:
+        return {"status": "insufficient_data"}, []
+
+    train_score = score_metrics(run_backtest(strategy, train)).score
+    oos_metrics = run_backtest(strategy, test)
+    oos = score_metrics(oos_metrics)
+    degradation = round(train_score - oos.score, 2)
+
+    validation = {
+        "status": "evaluated",
+        "train_frac": TRAIN_FRACTION,
+        "train_score": train_score,
+        "oos_score": oos.score,
+        "oos_grade": oos.grade,
+        "degradation": degradation,
+        "oos_trade_count": oos_metrics["trade_count"],
+        "oos_max_drawdown_pct": oos_metrics["max_drawdown_pct"],
+    }
+
+    weaknesses: list[str] = []
+    if oos_metrics["trade_count"] < MIN_OOS_TRADES:
+        validation["status"] = "inconclusive_few_oos_trades"
+    elif oos.grade == "reject":
+        weaknesses.append(f"fails out-of-sample (oos_score={oos.score})")
+    elif degradation > MAX_OOS_DEGRADATION:
+        weaknesses.append(f"unstable out-of-sample (is/oos gap={degradation})")
+
+    return validation, weaknesses
+
+
+def _demote_to_watch(grade: str) -> str:
+    return "watch" if grade in {"promising", "candidate"} else grade
 
 
 def conclusion_for_grade(grade: str) -> str:

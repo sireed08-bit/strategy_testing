@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from strategy_lab.backtest import PriceBar, build_signals, run_backtest
+from strategy_lab.backtest import PriceBar, build_signals, run_backtest, simulate_long_only
 from strategy_lab.models import StrategySpec
 from strategy_lab.strategy_ideas import seed_strategy_specs
 
@@ -50,6 +50,28 @@ def test_run_backtest_returns_scoring_metrics_for_moving_average_strategy() -> N
     metrics = run_backtest(strategy, _trending_bars())
     assert set(metrics) == EXPECTED_METRIC_KEYS
     assert metrics["exposure_pct"] > 0
+
+
+def test_simulate_long_only_enters_on_the_bar_after_signal() -> None:
+    # Signal is true on bars 1-3. With T+1 execution the position is held over
+    # the steps following each true signal, never the step that defines it.
+    closes = [100.0, 110.0, 121.0, 133.1, 120.0]
+    signals = [False, True, True, True, False]
+    equity_curve, daily_returns, trades = simulate_long_only(closes, signals, cost_bps=0.0)
+    # Return on the step from bar1->bar2 must be zero: the position only turns on
+    # at bar 2 (one bar after the signal first fired at bar 1).
+    assert daily_returns[0] == 0.0  # bar0->bar1
+    assert daily_returns[1] == 0.0  # bar1->bar2, position not yet effective
+    assert daily_returns[2] != 0.0  # bar2->bar3, now in position
+
+
+def test_simulate_long_only_transaction_cost_reduces_returns() -> None:
+    closes = [100.0, 105.0, 103.0, 108.0, 110.0, 107.0]
+    signals = [False, True, True, False, True, True]
+    free_curve, _, _ = simulate_long_only(closes, signals, cost_bps=0.0)
+    costed_curve, _, _ = simulate_long_only(closes, signals, cost_bps=10.0)
+    # Any round trip should leave the cost-bearing run with strictly less equity.
+    assert costed_curve[-1] < free_curve[-1]
 
 
 def test_run_backtest_rejects_unimplemented_strategy() -> None:

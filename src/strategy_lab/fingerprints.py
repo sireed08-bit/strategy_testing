@@ -12,7 +12,9 @@ from strategy_lab.models import DatasetSpec, StrategySpec
 #   v1: initial engine; risk_model present but never enforced.
 #   v2: max_hold_days enforced in rsi_pullback; fingerprint covers only
 #       computation-relevant fields (name/parameters/risk_model), not prose.
-ENGINE_VERSION = 2
+#   v3: realistic execution — T+1 entry and per-side transaction costs — plus
+#       out-of-sample validation gating the grade. Results are net of costs.
+ENGINE_VERSION = 3
 
 
 def canonical_json(payload: dict[str, Any]) -> str:

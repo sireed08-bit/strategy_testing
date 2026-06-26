@@ -8,15 +8,27 @@ from strategy_lab.backtest import PriceBar
 from strategy_lab.models import DatasetSpec
 
 
+def _opt_float(value: str | None) -> float | None:
+    """Parse an optional numeric CSV cell, tolerating blanks and bad values."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
 def load_price_bars_from_csv(path: Path | str, symbol: str) -> tuple[list[PriceBar], DatasetSpec]:
     source = Path(path)
     bars: list[PriceBar] = []
     with source.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         required = {"date", "symbol", "close"}
-        missing = required - set(reader.fieldnames or [])
+        present = set(reader.fieldnames or [])
+        missing = required - present
         if missing:
             raise ValueError(f"CSV missing required columns: {sorted(missing)}")
+        # Optional OHLCV columns are read when present and left as None otherwise.
         for row in reader:
             if row["symbol"] != symbol:
                 continue
@@ -25,6 +37,11 @@ def load_price_bars_from_csv(path: Path | str, symbol: str) -> tuple[list[PriceB
                     date=row["date"],
                     symbol=row["symbol"],
                     close=float(row["close"]),
+                    open=_opt_float(row.get("open")),
+                    high=_opt_float(row.get("high")),
+                    low=_opt_float(row.get("low")),
+                    volume=_opt_float(row.get("volume")),
+                    vwap=_opt_float(row.get("vwap")),
                 )
             )
 

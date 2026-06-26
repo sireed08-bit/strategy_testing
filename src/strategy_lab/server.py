@@ -180,6 +180,37 @@ def top_results(limit: int = 10) -> dict:
     }
 
 
+# ── robust results (parameter-stability ranked) ───────────────────────────────
+
+@app.get("/robust-results")
+def robust_results(limit: int = 10) -> dict:
+    """
+    Like /top-results but ranked by parameter-neighbourhood stability instead of
+    raw score, so robust plateaus outrank fragile single-combo spikes.
+    """
+    from strategy_lab.analysis import top_robust_records
+
+    records = ExperimentLog(_EXPERIMENT_LOG).records()
+    best = top_robust_records(records, limit=limit)
+    return {
+        "results": [
+            {
+                "strategy": r["strategy"]["name"],
+                "symbol": (r["dataset"]["symbols"] or ["?"])[0],
+                "score": r["score"],
+                "stability_score": r.get("stability_score"),
+                "neighbor_mean_score": r.get("neighbor_mean_score"),
+                "neighbor_count": r.get("neighbor_count"),
+                "grade": r["grade"],
+                "parameters": r["strategy"]["parameters"],
+                "risk_model": r["strategy"].get("risk_model", {}),
+                "validation": r.get("validation", {}),
+            }
+            for r in best
+        ]
+    }
+
+
 # ── live signals ─────────────────────────────────────────────────────────────
 
 @app.get("/signals")

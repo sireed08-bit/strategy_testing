@@ -14,6 +14,16 @@ class DuplicateExperimentError(ValueError):
 class ExperimentLog:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
+        # Lazily-loaded set of known fingerprints. Caching this avoids re-reading
+        # and re-parsing the entire JSONL on every append — which made batch
+        # inserts O(n²) and brought large rebuilds to a crawl. Loaded once from
+        # disk on first use, then kept in sync as records are appended.
+        self._fingerprint_cache: set[str] | None = None
+
+    def _known_fingerprints(self) -> set[str]:
+        if self._fingerprint_cache is None:
+            self._fingerprint_cache = {record["fingerprint"] for record in self.records()}
+        return self._fingerprint_cache
 
     def append(
         self,
@@ -22,12 +32,13 @@ class ExperimentLog:
         allow_revisit: bool = False,
         revisit_reason: str = "",
     ) -> None:
-        existing = self.find_by_fingerprint(record.fingerprint)
-        if existing and not allow_revisit:
+        known = self._known_fingerprints()
+        already_seen = record.fingerprint in known
+        if already_seen and not allow_revisit:
             raise DuplicateExperimentError(
                 f"Experiment fingerprint already exists: {record.fingerprint}"
             )
-        if existing and allow_revisit and not revisit_reason:
+        if already_seen and allow_revisit and not revisit_reason:
             raise DuplicateExperimentError("Revisited experiments need a reason.")
 
         payload = record.to_dict()
@@ -37,6 +48,7 @@ class ExperimentLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        known.add(record.fingerprint)
 
     def records(self) -> list[dict]:
         if not self.path.exists():
@@ -45,7 +57,7 @@ class ExperimentLog:
             return [json.loads(line) for line in handle if line.strip()]
 
     def fingerprints(self) -> set[str]:
-        return {record["fingerprint"] for record in self.records()}
+        return set(self._known_fingerprints())
 
     def find_by_fingerprint(self, fingerprint: str) -> list[dict]:
         return [
