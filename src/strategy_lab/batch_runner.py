@@ -117,6 +117,7 @@ def run_backtest_batch(
 TRAIN_FRACTION = 0.7
 MIN_OOS_TRADES = 5          # below this, the test window is too quiet to judge
 MAX_OOS_DEGRADATION = 25.0  # in-sample minus out-of-sample score points
+OOS_FAIL_SCORE = 45.0       # held-out score below this = the edge did not generalise
 _MIN_SEGMENT_BARS = 60
 
 
@@ -148,8 +149,12 @@ def out_of_sample_validation(
 
     weaknesses: list[str] = []
     if oos_metrics["trade_count"] < MIN_OOS_TRADES:
+        # The held-out window is too quiet to judge — not a failure, just thin.
+        # (Judging by oos.grade here would be wrong: the full-history trade_count
+        # hard-reject is miscalibrated for a 30% window and would fail strategies
+        # that actually generalise.)
         validation["status"] = "inconclusive_few_oos_trades"
-    elif oos.grade == "reject":
+    elif oos.score < OOS_FAIL_SCORE:
         weaknesses.append(f"fails out-of-sample (oos_score={oos.score})")
     elif degradation > MAX_OOS_DEGRADATION:
         weaknesses.append(f"unstable out-of-sample (is/oos gap={degradation})")
