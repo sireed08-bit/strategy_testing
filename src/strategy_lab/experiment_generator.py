@@ -89,6 +89,9 @@ def passes_constraints(parameters: dict[str, Any], constraints: list[str]) -> bo
         if constraint == "fast_sma_lt_slow_sma":
             if int(parameters["fast_sma"]) >= int(parameters["slow_sma"]):
                 return False
+        elif constraint == "exit_lookback_lt_entry_lookback":
+            if int(parameters["exit_lookback"]) >= int(parameters["entry_lookback"]):
+                return False
         else:
             raise ValueError(f"Unknown experiment constraint: {constraint}")
     return True

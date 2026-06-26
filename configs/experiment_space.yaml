@@ -14,6 +14,7 @@ strategies:
       stop_loss_pct: [8, 12, 16]
     constraints:
       - fast_sma_lt_slow_sma
+
   - family: mean_reversion
     name: rsi_pullback
     hypothesis: Oversold pullbacks in liquid index ETFs may mean-revert.
@@ -28,3 +29,65 @@ strategies:
       position_size_pct: [15, 20]
       max_hold_days: [5, 10, 15]
 
+  - family: breakout
+    name: donchian_breakout
+    hypothesis: New highs after consolidation may continue in the breakout direction.
+    rules:
+      entry: close above entry_lookback-day channel high
+      exit: close below exit_lookback-day channel low
+    parameter_grid:
+      entry_lookback: [20, 55, 100]
+      exit_lookback: [10, 20, 40]
+    risk_grid:
+      position_size_pct: [15, 20]
+      stop_loss_pct: [8, 12]
+    constraints:
+      - exit_lookback_lt_entry_lookback
+
+  - family: volatility
+    name: volatility_contraction_expansion
+    hypothesis: Breakouts following volatility contraction may offer better reward/risk.
+    rules:
+      entry: recent ATR contracts below prior ATR then price closes above recent range high
+      exit: price falls below recent range low
+    parameter_grid:
+      contraction_days: [10, 20, 40]
+      breakout_days: [5, 10, 20]
+      atr_period: [10, 14, 20]
+    risk_grid:
+      position_size_pct: [15, 20]
+
+  - family: risk_on_risk_off
+    name: spy_tlt_regime_switch
+    hypothesis: Simple risk regime filters may reduce equity drawdowns.
+    rules:
+      entry: price above trend_sma-day moving average (risk on)
+      exit: price below moving average (risk off, hold cash)
+    parameter_grid:
+      trend_sma: [100, 150, 200]
+    risk_grid:
+      position_size_pct: [50, 75, 100]
+
+  - family: momentum
+    name: relative_strength_rotation
+    hypothesis: Assets with positive trailing momentum may continue to lead.
+    rules:
+      entry: trailing return positive at rebalance interval
+      exit: trailing return negative at rebalance interval
+    parameter_grid:
+      lookback_days: [63, 126, 252]
+      rebalance_days: [21, 42, 63]
+    risk_grid:
+      position_size_pct: [25, 50]
+
+  - family: sector_rotation
+    name: sector_momentum_leadership
+    hypothesis: Sector leadership persistence can improve broad-market exposure timing.
+    rules:
+      entry: risk-adjusted trailing return positive at rebalance
+      exit: risk-adjusted trailing return negative at rebalance
+    parameter_grid:
+      lookback_days: [63, 90, 126]
+      rebalance_days: [21, 42, 63]
+    risk_grid:
+      position_size_pct: [25, 33]

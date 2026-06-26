@@ -50,19 +50,102 @@ def build_signals(strategy: StrategySpec, closes: list[float]) -> list[bool]:
         period = int(strategy.parameters["rsi_period"])
         entry_rsi = float(strategy.parameters["entry_rsi"])
         exit_rsi = float(strategy.parameters["exit_rsi"])
-        signals: list[bool] = []
+        rsi_signals: list[bool] = []
         in_position = False
         for index in range(len(closes)):
             value = rsi(closes, index, period)
             if value is None:
-                signals.append(False)
+                rsi_signals.append(False)
                 continue
             if not in_position and value <= entry_rsi:
                 in_position = True
             elif in_position and value >= exit_rsi:
                 in_position = False
-            signals.append(in_position)
-        return signals
+            rsi_signals.append(in_position)
+        return rsi_signals
+
+    if strategy.name == "donchian_breakout":
+        entry_n = int(strategy.parameters["entry_lookback"])
+        exit_n = int(strategy.parameters["exit_lookback"])
+        donchian_signals: list[bool] = []
+        in_position = False
+        for index in range(len(closes)):
+            if index < entry_n:
+                donchian_signals.append(False)
+                continue
+            channel_high = max(closes[index - entry_n : index])
+            channel_low = min(closes[index - exit_n : index])
+            if not in_position and closes[index] > channel_high:
+                in_position = True
+            elif in_position and closes[index] < channel_low:
+                in_position = False
+            donchian_signals.append(in_position)
+        return donchian_signals
+
+    if strategy.name == "volatility_contraction_expansion":
+        contraction_days = int(strategy.parameters["contraction_days"])
+        breakout_days = int(strategy.parameters["breakout_days"])
+        atr_period = int(strategy.parameters["atr_period"])
+        required = contraction_days + atr_period
+        vol_signals: list[bool] = []
+        in_position = False
+        for index in range(len(closes)):
+            if index < required:
+                vol_signals.append(False)
+                continue
+            recent_atr = atr_closes(closes, index, atr_period)
+            prior_atr = atr_closes(closes, index - contraction_days, atr_period)
+            lo = max(0, index - breakout_days)
+            range_high = max(closes[lo:index])
+            range_low = min(closes[lo:index])
+            contracted = prior_atr > 0 and recent_atr < prior_atr * 0.8
+            if not in_position and contracted and closes[index] > range_high:
+                in_position = True
+            elif in_position and closes[index] < range_low:
+                in_position = False
+            vol_signals.append(in_position)
+        return vol_signals
+
+    if strategy.name == "spy_tlt_regime_switch":
+        trend_period = int(strategy.parameters["trend_sma"])
+        return [
+            index >= trend_period and closes[index] > sma(closes, index, trend_period)
+            for index in range(len(closes))
+        ]
+
+    if strategy.name == "relative_strength_rotation":
+        lookback = int(strategy.parameters["lookback_days"])
+        rebalance = int(strategy.parameters["rebalance_days"])
+        rs_signals: list[bool] = []
+        in_position = False
+        for index in range(len(closes)):
+            if index < lookback:
+                rs_signals.append(False)
+                continue
+            if (index - lookback) % rebalance == 0:
+                trailing_return = closes[index] / closes[index - lookback] - 1.0
+                in_position = trailing_return > 0
+            rs_signals.append(in_position)
+        return rs_signals
+
+    if strategy.name == "sector_momentum_leadership":
+        lookback = int(strategy.parameters["lookback_days"])
+        rebalance = int(strategy.parameters["rebalance_days"])
+        sec_signals: list[bool] = []
+        in_position = False
+        for index in range(len(closes)):
+            if index < lookback:
+                sec_signals.append(False)
+                continue
+            if (index - lookback) % rebalance == 0:
+                window = closes[index - lookback : index + 1]
+                ret = window[-1] / window[0] - 1.0
+                daily_rets = [window[j] / window[j - 1] - 1.0 for j in range(1, len(window))]
+                vol = pstdev(daily_rets) if len(daily_rets) > 1 else 0.0
+                risk_adj = ret / vol if vol > 0 else 0.0
+                in_position = risk_adj > 0
+            sec_signals.append(in_position)
+        return sec_signals
 
     raise ValueError(f"No v1 backtest implementation for strategy: {strategy.name}")
 
@@ -124,6 +207,13 @@ def rsi(values: list[float], index: int, period: int) -> float | None:
         return 100.0
     relative_strength = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + relative_strength))
+
+
+def atr_closes(closes: list[float], index: int, period: int) -> float:
+    if index < period:
+        return 0.0
+    changes = [abs(closes[i] - closes[i - 1]) for i in range(index - period + 1, index + 1)]
+    return sum(changes) / period
 
 
 def annualized_return_pct(equity_curve: list[float]) -> float:
