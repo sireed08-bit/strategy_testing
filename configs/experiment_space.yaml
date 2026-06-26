@@ -22,9 +22,9 @@ strategies:
       entry: rsi below threshold and price above long_sma
       exit: rsi recovers or max_hold_days reached
     parameter_grid:
-      rsi_period: [7, 14, 21]
-      entry_rsi: [25, 30, 35]
-      exit_rsi: [45, 50, 55]
+      rsi_period: [7, 10, 12, 14, 16, 21]
+      entry_rsi: [20, 25, 28, 30, 32, 35]
+      exit_rsi: [50, 53, 55, 58, 60, 65]
     risk_grid:
       position_size_pct: [15, 20]
       max_hold_days: [5, 10, 15]

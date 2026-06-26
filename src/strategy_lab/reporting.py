@@ -84,10 +84,23 @@ def write_markdown_report(records: list[dict], output_path: Path | str) -> Path:
 
 
 def top_records(records: list[dict], limit: int = 5) -> list[dict]:
-    return sorted(
+    seen: set[tuple] = set()
+    unique: list[dict] = []
+    for record in sorted(
         records,
         key=lambda record: (GRADE_ORDER.get(record["grade"], 99), -record["score"]),
-    )[:limit]
+    ):
+        key = (
+            record["strategy"]["name"],
+            tuple(sorted(record["strategy"]["parameters"].items())),
+            tuple(record["dataset"].get("symbols", [])),
+        )
+        if key not in seen:
+            seen.add(key)
+            unique.append(record)
+        if len(unique) >= limit:
+            break
+    return unique
 
 
 def next_actions(records: list[dict]) -> list[str]:
