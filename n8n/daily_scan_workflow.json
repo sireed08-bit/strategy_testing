@@ -1,0 +1,82 @@
+{
+  "id": "stratlab-scan-003",
+  "name": "Strategy Lab — Daily Market Scanner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "15 21 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "33333333-0000-0000-0000-000000000001",
+      "name": "After Close (Mon-Fri 21:15 UTC)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "notes": "21:15 UTC ~ 16:15 ET, shortly after the close so the day's bar is final.\nRuns Mon-Fri only."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/scan-refresh",
+        "method": "POST",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "start", "value": "2022-01-01"}
+          ]
+        },
+        "options": {"timeout": 300000}
+      },
+      "id": "33333333-0000-0000-0000-000000000002",
+      "name": "Refresh Universe OHLCV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [480, 300],
+      "notes": "Downloads OHLCV for the full scanner universe from Alpaca IEX."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/scan",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "top_n", "value": "20"},
+            {"name": "min_abs_ic", "value": "0.03"},
+            {"name": "horizon", "value": "5"}
+          ]
+        },
+        "options": {"timeout": 120000}
+      },
+      "id": "33333333-0000-0000-0000-000000000003",
+      "name": "Run Cross-Sectional Scan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [720, 300],
+      "notes": "Ranks the universe by IC-selected indicators and emits a watchlist.\nThe server pushes the top names to ntfy automatically — no notification node needed here."
+    }
+  ],
+  "connections": {
+    "After Close (Mon-Fri 21:15 UTC)": {
+      "main": [[{"node": "Refresh Universe OHLCV", "type": "main", "index": 0}]]
+    },
+    "Refresh Universe OHLCV": {
+      "main": [[{"node": "Run Cross-Sectional Scan", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "strategy-lab-scan-v1",
+  "tags": [
+    {"name": "strategy-lab"},
+    {"name": "scanner"},
+    {"name": "daily"}
+  ]
+}
