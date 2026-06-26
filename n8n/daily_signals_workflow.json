@@ -1,0 +1,154 @@
+{
+  "name": "Strategy Lab — Daily Market Signals",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 14 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "22222222-0000-0000-0000-000000000001",
+      "name": "Market Open (Mon-Fri 9:30 ET)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "notes": "14:30 UTC = 9:30 AM ET. Adjust for your timezone if needed.\nRuns Mon-Fri only (cron field 1-5)."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/refresh-data",
+        "method": "POST",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "22222222-0000-0000-0000-000000000002",
+      "name": "Refresh Yesterday's Close",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300],
+      "notes": "Pulls yesterday's bars from Alpaca IEX.\nSkipped automatically if data is < 7 days old.\nPass force=true in query params to override."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/signals",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "10"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "22222222-0000-0000-0000-000000000003",
+      "name": "Get Current Signals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.active_signals.length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "22222222-0000-0000-0000-000000000004",
+      "name": "Any Active Signals?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "notes": "Only fires a notification when there are entry or exit signals.\nIf everything is flat, the workflow ends silently."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-signal-summary",
+              "name": "message",
+              "value": "=📊 Strategy Lab Signal Alert\n{{ $('Get Current Signals').item.json.as_of.split('T')[0] }} | Data through {{ $('Get Current Signals').item.json.last_bar_date }}\n\n🚨 Active Signals:\n{{ $('Get Current Signals').item.json.active_signals.map(s => `  ${s.signal.toUpperCase()} — ${s.strategy} on ${s.symbol} | score=${s.score} | close=$${s.last_close} | params=${JSON.stringify(s.parameters)}`).join('\\n') }}\n\n📋 Full Signal Board:\n{{ $('Get Current Signals').item.json.signals.map(s => `  ${s.signal.padEnd(10)} ${s.strategy} on ${s.symbol} (score=${s.score})`).join('\\n') }}\n\nThese are research signals from paper-trading strategies, not live trade recommendations.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "22222222-0000-0000-0000-000000000005",
+      "name": "Format Signal Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1120, 220]
+    },
+    {
+      "parameters": {},
+      "id": "22222222-0000-0000-0000-000000000006",
+      "name": "→ Send Alert (Email / Slack / SMS)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1340, 220],
+      "notes": "Connect your notification node here.\nAlert text is in {{ $json.message }}.\n\nSuggested: Gmail node → Subject: 'Signal Alert: {{active count}} signals' Body: {{ $json.message }}"
+    },
+    {
+      "parameters": {},
+      "id": "22222222-0000-0000-0000-000000000007",
+      "name": "Silent End (all flat)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1120, 400],
+      "notes": "No active signals today — workflow ends here with no notification."
+    }
+  ],
+  "connections": {
+    "Market Open (Mon-Fri 9:30 ET)": {
+      "main": [
+        [{"node": "Refresh Yesterday's Close", "type": "main", "index": 0}]
+      ]
+    },
+    "Refresh Yesterday's Close": {
+      "main": [
+        [{"node": "Get Current Signals", "type": "main", "index": 0}]
+      ]
+    },
+    "Get Current Signals": {
+      "main": [
+        [{"node": "Any Active Signals?", "type": "main", "index": 0}]
+      ]
+    },
+    "Any Active Signals?": {
+      "main": [
+        [{"node": "Format Signal Alert", "type": "main", "index": 0}],
+        [{"node": "Silent End (all flat)", "type": "main", "index": 0}]
+      ]
+    },
+    "Format Signal Alert": {
+      "main": [
+        [{"node": "→ Send Alert (Email / Slack / SMS)", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "strategy-lab-signals-v1",
+  "tags": [
+    {"name": "strategy-lab"},
+    {"name": "signals"},
+    {"name": "daily"}
+  ]
+}

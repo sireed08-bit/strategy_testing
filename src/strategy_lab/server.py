@@ -37,8 +37,11 @@ def _bootstrap_env() -> None:
 
 
 _bootstrap_env()
+from strategy_lab.backtest import build_signals
 from strategy_lab.batch_runner import run_backtest_batch
+from strategy_lab.data_loader import load_price_bars_from_csv
 from strategy_lab.experiment_log import ExperimentLog
+from strategy_lab.models import StrategySpec
 from strategy_lab.reporting import top_records
 from strategy_lab.run_ledger import ResearchRunLedger
 
@@ -153,6 +156,85 @@ def top_results(limit: int = 10) -> dict:
             }
             for r in best
         ]
+    }
+
+
+# ── live signals ─────────────────────────────────────────────────────────────
+
+@app.get("/signals")
+def signals(limit: int = 10) -> dict:
+    """
+    Apply the top-N strategies to the most recent bars in the historical CSV
+    and return whether each is currently signaling entry, hold, or exit.
+
+    Run /refresh-data first each morning to pick up yesterday's close.
+    Signal state is based on the last two bars in the CSV — no lookahead.
+    """
+    records = ExperimentLog(_EXPERIMENT_LOG).records()
+    best = top_records(records, limit=limit)
+    if not best:
+        raise HTTPException(404, "No experiments yet. Run /run-all first.")
+
+    csv = _data_csv()
+    results = []
+
+    for record in best:
+        symbol = (record["dataset"]["symbols"] or ["SPY"])[0]
+        s = record["strategy"]
+        spec = StrategySpec(
+            family=s["family"],
+            name=s["name"],
+            hypothesis=s.get("hypothesis", ""),
+            rules=s.get("rules", {}),
+            parameters=s["parameters"],
+            risk_model=s.get("risk_model", {}),
+        )
+
+        try:
+            bars, _ = load_price_bars_from_csv(csv, symbol)
+            closes = [bar.close for bar in bars]
+            sig = build_signals(spec, closes)
+
+            currently_long = sig[-1] if sig else False
+            was_long = sig[-2] if len(sig) >= 2 else False
+
+            if currently_long and not was_long:
+                state = "entry"
+            elif not currently_long and was_long:
+                state = "exit"
+            elif currently_long:
+                state = "hold_long"
+            else:
+                state = "flat"
+
+            last_date = bars[-1].date if bars else None
+            last_close = bars[-1].close if bars else None
+
+        except Exception as exc:
+            currently_long = False
+            state = "error"
+            last_date = None
+            last_close = None
+
+        results.append({
+            "strategy": s["name"],
+            "family": s["family"],
+            "symbol": symbol,
+            "score": record["score"],
+            "grade": record["grade"],
+            "parameters": s["parameters"],
+            "signal": state,
+            "currently_long": currently_long,
+            "last_bar_date": last_date,
+            "last_close": last_close,
+        })
+
+    active = [r for r in results if r["signal"] in ("entry", "exit")]
+    return {
+        "signals": results,
+        "active_signals": active,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+        "last_bar_date": results[0]["last_bar_date"] if results else None,
     }
 
 
