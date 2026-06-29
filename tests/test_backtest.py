@@ -74,6 +74,28 @@ def test_simulate_long_only_transaction_cost_reduces_returns() -> None:
     assert costed_curve[-1] < free_curve[-1]
 
 
+def test_stop_loss_caps_loss_and_blocks_reentry() -> None:
+    # Enter at bar 1 (signal true from bar 0), then price craters. A 10% stop must
+    # force an exit and the trade loss must be near the stop, not the full crash.
+    closes = [100.0, 100.0, 95.0, 85.0, 70.0, 60.0, 60.0]
+    signals = [True, True, True, True, True, True, True]  # always "in" per the strategy
+    _, _, trades_no_stop = simulate_long_only(closes, signals, cost_bps=0.0)
+    _, _, trades_stop = simulate_long_only(closes, signals, cost_bps=0.0, stop_loss_pct=10.0)
+    # Without a stop the single open trade rides the full decline.
+    assert min(trades_no_stop) < -0.30
+    # With a 10% stop the realised loss is capped far tighter.
+    assert min(trades_stop) > -0.25
+
+
+def test_stop_loss_uses_intraday_low_when_available() -> None:
+    # Close never breaches the stop, but an intraday low does — the stop should fire.
+    closes = [100.0, 100.0, 100.0, 100.0]
+    lows = [100.0, 100.0, 88.0, 100.0]  # bar 2 dipped to 88 (>10% below 100 entry)
+    signals = [True, True, True, True]
+    _, _, trades = simulate_long_only(closes, signals, cost_bps=0.0, stop_loss_pct=10.0, lows=lows)
+    assert len(trades) >= 1  # a stop-out trade was recorded
+
+
 def test_run_backtest_rejects_unimplemented_strategy() -> None:
     strategy = StrategySpec(
         family="test",

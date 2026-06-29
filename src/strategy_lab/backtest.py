@@ -38,8 +38,12 @@ def run_backtest(
 
     ordered = sorted(bars, key=lambda bar: bar.date)
     closes = [bar.close for bar in ordered]
+    lows = [bar.low for bar in ordered]
+    stop_loss_pct = float(strategy.risk_model.get("stop_loss_pct", 0))
     signals = build_signals(strategy, closes)
-    equity_curve, daily_returns, trades = simulate_long_only(closes, signals, cost_bps)
+    equity_curve, daily_returns, trades = simulate_long_only(
+        closes, signals, cost_bps, stop_loss_pct=stop_loss_pct, lows=lows
+    )
 
     return {
         "annualized_return_pct": annualized_return_pct(equity_curve),
@@ -182,6 +186,8 @@ def simulate_long_only(
     closes: list[float],
     signals: list[bool],
     cost_bps: float = 0.0,
+    stop_loss_pct: float = 0.0,
+    lows: list[float | None] | None = None,
 ) -> tuple[list[float], list[float], list[float]]:
     """
     Long-only equity simulation with realistic execution.
@@ -190,10 +196,17 @@ def simulate_long_only(
       that defines a signal is never also the bar it is acted on (no look-ahead).
     - Transaction cost: cost_bps basis points are deducted on each entry and exit,
       folded into both the equity curve and daily returns so every metric is net.
+    - Stop loss: when stop_loss_pct > 0, a position is force-exited once price
+      falls that far below its entry. After a stop-out the simulation stays flat
+      until the strategy's own signal resets (goes flat then fires again), so a
+      stopped trade is not immediately re-entered. Uses the bar low when available
+      (intraday stop) and falls back to the close otherwise.
     """
     cost = cost_bps / 10_000.0
     # Shift signals forward one bar to enforce T+1 execution.
     effective = ([False] + signals[:-1]) if signals else []
+    if stop_loss_pct > 0:
+        effective = _apply_stop_loss(effective, closes, stop_loss_pct / 100.0, lows)
 
     equity = 1.0
     equity_curve = [equity]
@@ -228,6 +241,42 @@ def simulate_long_only(
         trades.append((1.0 + gross) * (1.0 - cost) ** 2 - 1.0)
 
     return equity_curve, daily_returns, trades
+
+
+def _apply_stop_loss(
+    effective: list[bool],
+    closes: list[float],
+    stop: float,
+    lows: list[float | None] | None,
+) -> list[bool]:
+    """
+    Force-exit a position once price falls `stop` (fraction) below its entry.
+
+    After a stop-out the position stays flat until the underlying signal resets
+    (goes flat, then fires again) so a stopped trade is not re-entered on the very
+    next bar. The stop is tested against the bar low when available (a realistic
+    intraday trigger), otherwise the close.
+    """
+    result = list(effective)
+    entry_price: float | None = None
+    suppressed = False
+    for index in range(len(result)):
+        if not result[index]:
+            suppressed = False  # strategy flat → clear suppression, no open trade
+            entry_price = None
+            continue
+        if suppressed:
+            result[index] = False  # stopped out earlier; remain flat
+            continue
+        if entry_price is None:
+            entry_price = closes[index]  # entry bar — no stop check yet
+            continue
+        low = lows[index] if (lows is not None and lows[index] is not None) else closes[index]
+        if low <= entry_price * (1.0 - stop):
+            result[index] = False  # stop hit → exit this bar
+            suppressed = True
+            entry_price = None
+    return result
 
 
 def sma(values: list[float], index: int, window: int) -> float:
