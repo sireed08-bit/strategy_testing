@@ -58,6 +58,38 @@ def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default).strip()
 
 
+# ── batch write lock ──────────────────────────────────────────────────────────
+# Only one batch may write the experiment log at a time. Without this, a manual
+# /run-all overlapping a scheduled (n8n) one interleaves JSONL lines and corrupts
+# the log. The lock is an atomic O_CREAT|O_EXCL file; a stale lock (dead process
+# or >2h old) is reclaimed so a crash can't deadlock future runs.
+import contextlib
+
+_BATCH_LOCK = Path(__file__).resolve().parents[2] / "data" / "experiments" / ".batch.lock"
+_STALE_LOCK_SECONDS = 2 * 60 * 60
+
+
+@contextlib.contextmanager
+def _batch_write_lock():
+    _BATCH_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    if _BATCH_LOCK.exists():
+        age = datetime.now(timezone.utc).timestamp() - _BATCH_LOCK.stat().st_mtime
+        if age < _STALE_LOCK_SECONDS:
+            raise HTTPException(
+                409,
+                "A batch is already running (experiment log is locked). "
+                "Wait for it to finish or retry shortly.",
+            )
+        _BATCH_LOCK.unlink(missing_ok=True)  # stale — reclaim it
+    fd = os.open(str(_BATCH_LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    try:
+        os.write(fd, f"{os.getpid()} {datetime.now(timezone.utc).isoformat()}".encode())
+        os.close(fd)
+        yield
+    finally:
+        _BATCH_LOCK.unlink(missing_ok=True)
+
+
 def _notify(title: str, message: str, priority: str = "default") -> None:
     """Fire-and-forget push notification to ntfy.sh. Silently skipped if NTFY_TOPIC is unset."""
     topic = _env("NTFY_TOPIC")
@@ -316,15 +348,16 @@ def run_batch(req: BatchRequest) -> dict:
         f"Autonomous batch — {req.symbol} — {datetime.now(timezone.utc).date().isoformat()}"
     )
     try:
-        result = run_backtest_batch(
-            experiment_log_path=_EXPERIMENT_LOG,
-            run_log_path=_RUN_LOG,
-            report_path=_REPORT,
-            purpose=purpose,
-            limit=req.limit,
-            data_csv=_data_csv(),
-            symbol=req.symbol,
-        )
+        with _batch_write_lock():
+            result = run_backtest_batch(
+                experiment_log_path=_EXPERIMENT_LOG,
+                run_log_path=_RUN_LOG,
+                report_path=_REPORT,
+                purpose=purpose,
+                limit=req.limit,
+                data_csv=_data_csv(),
+                symbol=req.symbol,
+            )
         return result.to_dict()
     except HTTPException:
         raise
@@ -336,6 +369,11 @@ def run_batch(req: BatchRequest) -> dict:
 
 @app.post("/run-all")
 def run_all(limit: int = 400) -> dict:
+    with _batch_write_lock():
+        return _run_all_locked(limit)
+
+
+def _run_all_locked(limit: int) -> dict:
     csv = _data_csv()
     date_str = datetime.now(timezone.utc).date().isoformat()
     results = []
