@@ -40,7 +40,7 @@ _bootstrap_env()
 from strategy_lab.backtest import build_signals_from_bars
 from strategy_lab.batch_runner import run_backtest_batch
 from strategy_lab.data_loader import load_price_bars_from_csv
-from strategy_lab.experiment_log import ExperimentLog
+from strategy_lab.experiment_log import ExperimentLog, archived_total, prune_experiment_log
 from strategy_lab.models import StrategySpec
 from strategy_lab.reporting import top_records
 from strategy_lab.run_ledger import ResearchRunLedger
@@ -169,12 +169,17 @@ def status() -> dict:
     grades = Counter(r.get("grade") for r in records)
     families = Counter(r["strategy"]["family"] for r in records)
     last = runs[-1] if runs else None
+    # Reject-grade records may have been pruned to a private archive to keep the
+    # hot log fast; count them via the metadata so totals stay honest.
+    pruned = archived_total(_EXPERIMENT_LOG)
     return {
-        "total_experiments": len(records),
+        "total_experiments": len(records) + pruned,
+        "hot_log_records": len(records),
+        "archived_rejects": pruned,
         "candidates": grades.get("candidate", 0),
         "promising": grades.get("promising", 0),
         "watch": grades.get("watch", 0),
-        "rejects": grades.get("reject", 0),
+        "rejects": grades.get("reject", 0) + pruned,
         "strategy_families": dict(sorted(families.items())),
         "total_runs": len(runs),
         "last_run_at": last.get("created_at") if last else None,
@@ -412,6 +417,31 @@ def _run_all_locked(limit: int) -> dict:
         priority="default",
     )
     return payload
+
+
+# ── maintenance: prune reject-grade records ───────────────────────────────────
+
+@app.post("/prune")
+def prune() -> dict:
+    """
+    Move reject-grade experiments out of the hot log into a private archive,
+    keeping the fingerprint index complete so pruned combos are never re-run.
+    Shrinks the working log (~90% is reject-grade) so status/sync/auto-research
+    stay fast as the autonomous runs accumulate volume.
+    """
+    archive_dir = _private_storage() / "archive"
+    archive_path = archive_dir / "pruned_rejects.jsonl"
+    with _batch_write_lock():
+        result = prune_experiment_log(_EXPERIMENT_LOG, archive_path)
+    _notify(
+        title="Strategy Lab — log pruned",
+        message=(
+            f"Archived {result['archived_this_run']} reject records to private storage. "
+            f"Hot log now {result['hot_log_records']} records."
+        ),
+        priority="default",
+    )
+    return {**result, "archive_path": str(archive_path), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 # ── autonomous research loop ──────────────────────────────────────────────────

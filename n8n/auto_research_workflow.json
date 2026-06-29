@@ -55,6 +55,19 @@
     },
     {
       "parameters": {
+        "url": "http://host.docker.internal:8078/prune",
+        "method": "POST",
+        "options": {"timeout": 300000}
+      },
+      "id": "44444444-0000-0000-0000-000000000005",
+      "name": "Prune Reject Records",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 300],
+      "notes": "Archive reject-grade records to private storage so the hot log stays small (~90% of records are rejects). Fingerprint index is preserved, so pruned combos are never re-run."
+    },
+    {
+      "parameters": {
         "url": "http://host.docker.internal:8078/sync-private",
         "method": "POST",
         "options": {"timeout": 120000}
@@ -63,8 +76,8 @@
       "name": "Sync Private State",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [900, 300],
-      "notes": "Commit + push the refined experiment log to the private state repo."
+      "position": [1120, 300],
+      "notes": "Commit + push the refined (and now small) experiment log to the private state repo."
     }
   ],
   "connections": {
@@ -75,6 +88,9 @@
       "main": [[{"node": "Auto-Research Round", "type": "main", "index": 0}]]
     },
     "Auto-Research Round": {
+      "main": [[{"node": "Prune Reject Records", "type": "main", "index": 0}]]
+    },
+    "Prune Reject Records": {
       "main": [[{"node": "Sync Private State", "type": "main", "index": 0}]]
     }
   },
