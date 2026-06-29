@@ -1,0 +1,92 @@
+{
+  "id": "stratlab-autoresearch-004",
+  "name": "Strategy Lab — Autonomous Research Loop",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 2"
+            }
+          ]
+        }
+      },
+      "id": "44444444-0000-0000-0000-000000000001",
+      "name": "Weekly (Tue 10:00 UTC)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "notes": "Runs Tuesday, after Monday's grid-fill /run-all. Keeps the lab adjusting on its own."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/refresh-data",
+        "method": "POST",
+        "options": {"timeout": 120000}
+      },
+      "id": "44444444-0000-0000-0000-000000000002",
+      "name": "Refresh Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300],
+      "notes": "Skipped automatically if data is < 7 days old."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/auto-research",
+        "method": "POST",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "top_k", "value": "6"},
+            {"name": "max_new_per_symbol", "value": "80"}
+          ]
+        },
+        "options": {"timeout": 1200000}
+      },
+      "id": "44444444-0000-0000-0000-000000000003",
+      "name": "Auto-Research Round",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300],
+      "notes": "Hill-climbs around the current top out-of-sample-robust results and keeps what survives. The server pushes a result summary to ntfy automatically.\n\nGuardrails: only refines OOS-validated combos, every neighbour is itself OOS-gated, bounded per round. Holds the batch write-lock so it never races the weekly /run-all."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/sync-private",
+        "method": "POST",
+        "options": {"timeout": 120000}
+      },
+      "id": "44444444-0000-0000-0000-000000000004",
+      "name": "Sync Private State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 300],
+      "notes": "Commit + push the refined experiment log to the private state repo."
+    }
+  ],
+  "connections": {
+    "Weekly (Tue 10:00 UTC)": {
+      "main": [[{"node": "Refresh Data", "type": "main", "index": 0}]]
+    },
+    "Refresh Data": {
+      "main": [[{"node": "Auto-Research Round", "type": "main", "index": 0}]]
+    },
+    "Auto-Research Round": {
+      "main": [[{"node": "Sync Private State", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "versionId": "strategy-lab-autoresearch-v1",
+  "tags": [
+    {"name": "strategy-lab"},
+    {"name": "auto-research"},
+    {"name": "weekly"}
+  ]
+}

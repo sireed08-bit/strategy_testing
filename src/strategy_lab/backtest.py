@@ -40,7 +40,7 @@ def run_backtest(
     closes = [bar.close for bar in ordered]
     lows = [bar.low for bar in ordered]
     stop_loss_pct = float(strategy.risk_model.get("stop_loss_pct", 0))
-    signals = build_signals(strategy, closes)
+    signals = build_signals_from_bars(strategy, ordered)
     equity_curve, daily_returns, trades = simulate_long_only(
         closes, signals, cost_bps, stop_loss_pct=stop_loss_pct, lows=lows
     )
@@ -57,6 +57,75 @@ def run_backtest(
         "regime_consistency": chunk_consistency(daily_returns),
         "robustness_score": chunk_consistency(daily_returns),
     }
+
+
+# Strategy families that need OHLCV beyond close (gap, true range, volume).
+_OHLCV_FAMILIES = {"sma_reversion", "gap_momentum"}
+
+
+def build_signals_from_bars(strategy: StrategySpec, bars: list[PriceBar]) -> list[bool]:
+    """
+    Bars-aware signal dispatcher. OHLCV-based families (derived from the scanner's
+    top Information-Coefficient indicators) are computed here; everything else
+    falls back to the close-only build_signals so existing strategies are untouched.
+    """
+    closes = [bar.close for bar in bars]
+
+    if strategy.name == "sma_reversion":
+        # From dist_from_sma_50 (the cleanest IC: price far below its SMA reverts).
+        window = int(strategy.parameters["sma_window"])
+        entry_pct = float(strategy.parameters["entry_pct"])
+        exit_pct = float(strategy.parameters["exit_pct"])
+        max_hold = int(strategy.risk_model.get("max_hold_days", 0))
+        signals: list[bool] = []
+        in_position = False
+        days_held = 0
+        for index in range(len(closes)):
+            if index + 1 < window:
+                signals.append(False)
+                continue
+            avg = sma(closes, index, window)
+            if in_position:
+                days_held += 1
+                reverted = closes[index] >= avg * (1.0 - exit_pct / 100.0)
+                forced = max_hold > 0 and days_held >= max_hold
+                if reverted or forced:
+                    in_position = False
+                    days_held = 0
+            elif closes[index] <= avg * (1.0 - entry_pct / 100.0):
+                in_position = True
+                days_held = 0
+            signals.append(in_position)
+        return signals
+
+    if strategy.name == "gap_momentum":
+        # From gap_pct (positive IC: up-gaps show short-term continuation).
+        opens = [bar.open for bar in bars]
+        if any(o is None for o in opens):
+            return [False] * len(closes)  # needs open prices
+        gap_threshold = float(strategy.parameters["gap_pct"])
+        max_hold = int(strategy.risk_model.get("max_hold_days", 3))
+        signals = []
+        in_position = False
+        days_held = 0
+        for index in range(len(closes)):
+            if index == 0:
+                signals.append(False)
+                continue
+            if in_position:
+                days_held += 1
+                if max_hold > 0 and days_held >= max_hold:
+                    in_position = False
+                    days_held = 0
+            else:
+                gap = (opens[index] - closes[index - 1]) / closes[index - 1] * 100.0
+                if gap >= gap_threshold:
+                    in_position = True
+                    days_held = 0
+            signals.append(in_position)
+        return signals
+
+    return build_signals(strategy, closes)
 
 
 def build_signals(strategy: StrategySpec, closes: list[float]) -> list[bool]:

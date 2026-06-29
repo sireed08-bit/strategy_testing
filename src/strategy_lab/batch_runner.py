@@ -41,9 +41,48 @@ def run_backtest_batch(
         shard_count=shard_count,
     )
 
-    created = 0
-    skipped = 0
-    errored = 0
+    created, skipped, errored, notes = evaluate_and_log_strategies(
+        strategies, bars, dataset, experiment_log
+    )
+
+    all_records = experiment_log.records()
+    write_markdown_report(all_records, report_path)
+    run_record = ResearchRunRecord(
+        purpose=purpose,
+        mode="backtest_batch",
+        status="completed" if errored == 0 else "completed_with_errors",
+        experiment_log_path=str(experiment_log_path),
+        report_path=str(report_path),
+        experiments_attempted=len(strategies),
+        experiments_created=created,
+        experiments_skipped_duplicates=skipped,
+        strategy_families=dict(Counter(strategy.family for strategy in strategies)),
+        grade_counts=dict(Counter(record.get("grade", "unknown") for record in all_records)),
+        next_action=next_action_for_batch(created, errored),
+        notes=notes
+        + [
+            f"dataset={dataset.name}",
+            f"symbol={symbol}",
+            f"shard={shard_index}/{shard_count}",
+            "Synthetic data is for plumbing validation only." if data_csv is None else "External CSV data supplied.",
+        ],
+        artifacts={
+            "experiment_log": str(experiment_log_path),
+            "report": str(report_path),
+        },
+    )
+    ResearchRunLedger(run_log_path).append(run_record)
+    return run_record
+
+
+def evaluate_and_log_strategies(
+    strategies: list[StrategySpec],
+    bars: list[PriceBar],
+    dataset,
+    experiment_log: ExperimentLog,
+) -> tuple[int, int, int, list[str]]:
+    """Backtest, score, OOS-validate and append each spec. Reused by auto-research."""
+    created = skipped = errored = 0
     notes: list[str] = []
     for strategy in strategies:
         try:
@@ -75,38 +114,10 @@ def run_backtest_batch(
             created += 1
         except DuplicateExperimentError:
             skipped += 1
-        except ValueError as exc:
+        except (ValueError, KeyError) as exc:
             errored += 1
             notes.append(f"{strategy.family}/{strategy.name}: {exc}")
-
-    all_records = experiment_log.records()
-    write_markdown_report(all_records, report_path)
-    run_record = ResearchRunRecord(
-        purpose=purpose,
-        mode="backtest_batch",
-        status="completed" if errored == 0 else "completed_with_errors",
-        experiment_log_path=str(experiment_log_path),
-        report_path=str(report_path),
-        experiments_attempted=len(strategies),
-        experiments_created=created,
-        experiments_skipped_duplicates=skipped,
-        strategy_families=dict(Counter(strategy.family for strategy in strategies)),
-        grade_counts=dict(Counter(record.get("grade", "unknown") for record in all_records)),
-        next_action=next_action_for_batch(created, errored),
-        notes=notes
-        + [
-            f"dataset={dataset.name}",
-            f"symbol={symbol}",
-            f"shard={shard_index}/{shard_count}",
-            "Synthetic data is for plumbing validation only." if data_csv is None else "External CSV data supplied.",
-        ],
-        artifacts={
-            "experiment_log": str(experiment_log_path),
-            "report": str(report_path),
-        },
-    )
-    ResearchRunLedger(run_log_path).append(run_record)
-    return run_record
+    return created, skipped, errored, notes
 
 
 # ── out-of-sample validation ──────────────────────────────────────────────────

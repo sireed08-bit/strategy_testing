@@ -37,7 +37,7 @@ def _bootstrap_env() -> None:
 
 
 _bootstrap_env()
-from strategy_lab.backtest import build_signals
+from strategy_lab.backtest import build_signals_from_bars
 from strategy_lab.batch_runner import run_backtest_batch
 from strategy_lab.data_loader import load_price_bars_from_csv
 from strategy_lab.experiment_log import ExperimentLog
@@ -277,8 +277,7 @@ def signals(limit: int = 10) -> dict:
 
         try:
             bars, _ = load_price_bars_from_csv(csv, symbol)
-            closes = [bar.close for bar in bars]
-            sig = build_signals(spec, closes)
+            sig = build_signals_from_bars(spec, bars)
 
             currently_long = sig[-1] if sig else False
             was_long = sig[-2] if len(sig) >= 2 else False
@@ -413,6 +412,40 @@ def _run_all_locked(limit: int) -> dict:
         priority="default",
     )
     return payload
+
+
+# ── autonomous research loop ──────────────────────────────────────────────────
+
+@app.post("/auto-research")
+def auto_research(top_k: int = 6, max_new_per_symbol: int = 60) -> dict:
+    """
+    One bounded hill-climbing round: refine parameters around the current top
+    out-of-sample-robust results, backtest the neighbours, keep what survives.
+    Safe to schedule — it only adds OOS-gated experiments, never edits code/grids.
+    """
+    from strategy_lab.auto_research import run_auto_research
+
+    with _batch_write_lock():
+        result = run_auto_research(
+            experiment_log_path=_EXPERIMENT_LOG,
+            run_log_path=_RUN_LOG,
+            report_path=_REPORT,
+            data_csv=_data_csv(),
+            symbols=_SYMBOLS,
+            top_k=top_k,
+            max_new_per_symbol=max_new_per_symbol,
+        )
+    headline = (
+        f"+{result['experiments_created']} refined experiments. "
+        f"Best score {result['best_score_before']} → {result['best_score_after']}"
+        + (" (improved)" if result["improved"] else " (no improvement)")
+    )
+    _notify(
+        title="Strategy Lab — auto-research round complete",
+        message=f"{headline}\nCandidates: {result['candidates']}  Promising: {result['promising']}",
+        priority="default",
+    )
+    return {**result, "headline": headline, "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 # ── refresh market data ───────────────────────────────────────────────────────

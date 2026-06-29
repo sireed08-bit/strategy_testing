@@ -98,3 +98,30 @@ strategies:
       lookback_days: [63, 90, 126]
       rebalance_days: [21, 42, 63]
     # risk_grid omitted: position_size_pct is not yet enforced.
+
+  # ── indicator-derived families (built from the scanner's top-IC signals) ──────
+  - family: mean_reversion
+    name: sma_reversion
+    hypothesis: Price stretched far below its moving average tends to revert — built from the strongest clean scanner signal (dist_from_sma, negative IC growing with horizon).
+    rules:
+      entry: close falls entry_pct below the sma_window moving average
+      exit: close reverts to within exit_pct of the average, or max_hold_days
+    parameter_grid:
+      sma_window: [20, 50, 100]
+      entry_pct: [3, 5, 8, 10]
+      exit_pct: [0, 1, 2]
+    risk_grid:
+      max_hold_days: [0, 10, 20]
+      stop_loss_pct: [8]
+
+  - family: momentum
+    name: gap_momentum
+    hypothesis: Overnight up-gaps show short-term continuation — built from the scanner's positive gap_pct IC.
+    rules:
+      entry: overnight gap (open vs prior close) exceeds gap_pct
+      exit: max_hold_days reached
+    parameter_grid:
+      gap_pct: [0.5, 1.0, 1.5, 2.0]
+    risk_grid:
+      max_hold_days: [2, 3, 5]
+      stop_loss_pct: [5, 8]

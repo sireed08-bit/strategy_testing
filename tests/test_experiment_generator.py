@@ -8,6 +8,8 @@ ALL_STRATEGY_NAMES = {
     "spy_tlt_regime_switch",
     "relative_strength_rotation",
     "sector_momentum_leadership",
+    "sma_reversion",
+    "gap_momentum",
 }
 
 
