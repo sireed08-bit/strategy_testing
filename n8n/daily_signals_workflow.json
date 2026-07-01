@@ -8,17 +8,17 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "30 14 * * 1-5"
+              "expression": "30 8 * * 1-5"
             }
           ]
         }
       },
       "id": "22222222-0000-0000-0000-000000000001",
-      "name": "Market Open (Mon-Fri 9:30 ET)",
+      "name": "Market Open (Mon-Fri 8:30 CT)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
       "position": [240, 300],
-      "notes": "14:30 UTC = 9:30 AM ET. Adjust for your timezone if needed.\nRuns Mon-Fri only (cron field 1-5)."
+      "notes": "8:30 AM Central = 9:30 AM ET (market open). Workflow timezone is America/Chicago, so this is DST-proof.\nRuns Mon-Fri only (cron field 1-5)."
     },
     {
       "parameters": {
@@ -114,7 +114,7 @@
     }
   ],
   "connections": {
-    "Market Open (Mon-Fri 9:30 ET)": {
+    "Market Open (Mon-Fri 8:30 CT)": {
       "main": [
         [{"node": "Refresh Yesterday's Close", "type": "main", "index": 0}]
       ]
@@ -143,6 +143,7 @@
   },
   "active": false,
   "settings": {
+    "timezone": "America/Chicago",
     "executionOrder": "v1",
     "saveManualExecutions": true
   },

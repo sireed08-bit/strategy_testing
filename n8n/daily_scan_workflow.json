@@ -8,17 +8,17 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "15 21 * * 1-5"
+              "expression": "15 15 * * 1-5"
             }
           ]
         }
       },
       "id": "33333333-0000-0000-0000-000000000001",
-      "name": "After Close (Mon-Fri 21:15 UTC)",
+      "name": "After Close (Mon-Fri 3:15 PM CT)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
       "position": [240, 300],
-      "notes": "21:15 UTC ~ 16:15 ET, shortly after the close so the day's bar is final.\nRuns Mon-Fri only."
+      "notes": "3:15 PM Central = 4:15 PM ET, shortly after the close so the day's bar is final. Workflow timezone is America/Chicago (DST-proof).\nRuns Mon-Fri only."
     },
     {
       "parameters": {
@@ -61,7 +61,7 @@
     }
   ],
   "connections": {
-    "After Close (Mon-Fri 21:15 UTC)": {
+    "After Close (Mon-Fri 3:15 PM CT)": {
       "main": [[{"node": "Refresh Universe OHLCV", "type": "main", "index": 0}]]
     },
     "Refresh Universe OHLCV": {
@@ -70,6 +70,7 @@
   },
   "active": false,
   "settings": {
+    "timezone": "America/Chicago",
     "executionOrder": "v1",
     "saveManualExecutions": true
   },

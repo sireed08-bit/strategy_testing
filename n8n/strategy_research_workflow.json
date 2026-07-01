@@ -10,14 +10,14 @@
               "field": "weeks",
               "weeksInterval": 1,
               "triggerAtDay": [1],
-              "triggerAtHour": 9,
+              "triggerAtHour": 7,
               "triggerAtMinute": 0
             }
           ]
         }
       },
       "id": "11111111-0000-0000-0000-000000000001",
-      "name": "Weekly Monday 9am",
+      "name": "Weekly Monday 7am CT",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
       "position": [240, 300]
@@ -182,7 +182,7 @@
     }
   ],
   "connections": {
-    "Weekly Monday 9am": {
+    "Weekly Monday 7am CT": {
       "main": [
         [{"node": "Health Check", "type": "main", "index": 0}]
       ]
@@ -236,6 +236,7 @@
   },
   "active": false,
   "settings": {
+    "timezone": "America/Chicago",
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",

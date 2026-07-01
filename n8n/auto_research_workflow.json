@@ -8,13 +8,13 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 10 * * 2"
+              "expression": "0 7 * * 2"
             }
           ]
         }
       },
       "id": "44444444-0000-0000-0000-000000000001",
-      "name": "Weekly (Tue 10:00 UTC)",
+      "name": "Weekly (Tue 7:00 AM CT)",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
       "position": [240, 300],
@@ -81,7 +81,7 @@
     }
   ],
   "connections": {
-    "Weekly (Tue 10:00 UTC)": {
+    "Weekly (Tue 7:00 AM CT)": {
       "main": [[{"node": "Refresh Data", "type": "main", "index": 0}]]
     },
     "Refresh Data": {
@@ -96,6 +96,7 @@
   },
   "active": false,
   "settings": {
+    "timezone": "America/Chicago",
     "executionOrder": "v1",
     "saveManualExecutions": true
   },
