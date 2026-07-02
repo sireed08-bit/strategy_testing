@@ -96,6 +96,32 @@ def test_stop_loss_uses_intraday_low_when_available() -> None:
     assert len(trades) >= 1  # a stop-out trade was recorded
 
 
+def test_stop_loss_fills_at_stop_price_not_recovered_close() -> None:
+    # Bar 2 dips through the 10% stop intraday (low=88) but closes back at 100.
+    # A real stop order fills at ~90; booking the recovered close of 100 would
+    # credit the trade with upside a stopped-out position never had.
+    closes = [100.0, 100.0, 100.0, 100.0]
+    lows = [100.0, 100.0, 88.0, 100.0]
+    signals = [True, True, True, True]
+    _, _, trades = simulate_long_only(closes, signals, cost_bps=0.0, stop_loss_pct=10.0, lows=lows)
+    assert len(trades) == 1
+    assert abs(trades[0] - (-0.10)) < 1e-9  # exit at exactly the stop price
+
+
+def test_stop_loss_fills_at_open_when_bar_gaps_through_stop() -> None:
+    # Bar 2 opens at 80, far below the 90 stop — the fill cannot be better than
+    # the open. Booking the stop price (90) would understate the gap loss.
+    closes = [100.0, 100.0, 82.0, 82.0]
+    lows = [100.0, 100.0, 78.0, 82.0]
+    opens = [100.0, 100.0, 80.0, 82.0]
+    signals = [True, True, True, True]
+    _, _, trades = simulate_long_only(
+        closes, signals, cost_bps=0.0, stop_loss_pct=10.0, lows=lows, opens=opens
+    )
+    assert len(trades) == 1
+    assert abs(trades[0] - (-0.20)) < 1e-9  # filled at the 80 open, not the 90 stop
+
+
 def test_run_backtest_rejects_unimplemented_strategy() -> None:
     strategy = StrategySpec(
         family="test",

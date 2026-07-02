@@ -17,7 +17,10 @@ from strategy_lab.models import DatasetSpec, StrategySpec
 #   v4: out-of-sample failure keyed on the held-out *score*, not the OOS grade
 #       (whose trade_count hard-reject was miscalibrated for the short window and
 #       wrongly failed strategies that actually generalised).
-ENGINE_VERSION = 4
+#   v5: realistic stop-loss fills (stop price, or the open on a gap-through —
+#       never the recovered close), warm-indicator out-of-sample evaluation, and
+#       a final-exam holdout tail excluded from all optimisation.
+ENGINE_VERSION = 5
 
 
 def canonical_json(payload: dict[str, Any]) -> str:

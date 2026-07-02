@@ -39,10 +39,11 @@ def run_backtest(
     ordered = sorted(bars, key=lambda bar: bar.date)
     closes = [bar.close for bar in ordered]
     lows = [bar.low for bar in ordered]
+    opens = [bar.open for bar in ordered]
     stop_loss_pct = float(strategy.risk_model.get("stop_loss_pct", 0))
     signals = build_signals_from_bars(strategy, ordered)
     equity_curve, daily_returns, trades = simulate_long_only(
-        closes, signals, cost_bps, stop_loss_pct=stop_loss_pct, lows=lows
+        closes, signals, cost_bps, stop_loss_pct=stop_loss_pct, lows=lows, opens=opens
     )
 
     return {
@@ -257,6 +258,7 @@ def simulate_long_only(
     cost_bps: float = 0.0,
     stop_loss_pct: float = 0.0,
     lows: list[float | None] | None = None,
+    opens: list[float | None] | None = None,
 ) -> tuple[list[float], list[float], list[float]]:
     """
     Long-only equity simulation with realistic execution.
@@ -266,16 +268,20 @@ def simulate_long_only(
     - Transaction cost: cost_bps basis points are deducted on each entry and exit,
       folded into both the equity curve and daily returns so every metric is net.
     - Stop loss: when stop_loss_pct > 0, a position is force-exited once price
-      falls that far below its entry. After a stop-out the simulation stays flat
-      until the strategy's own signal resets (goes flat then fires again), so a
-      stopped trade is not immediately re-entered. Uses the bar low when available
-      (intraday stop) and falls back to the close otherwise.
+      falls that far below its entry. The exit is booked at a realistic fill:
+      the stop price itself, or the open when the bar gapped straight through it
+      — never the close, which would credit intraday recoveries a real stop order
+      would have missed. After a stop-out the simulation stays flat until the
+      strategy's own signal resets, so a stopped trade is not re-entered next bar.
     """
     cost = cost_bps / 10_000.0
     # Shift signals forward one bar to enforce T+1 execution.
     effective = ([False] + signals[:-1]) if signals else []
+    stop_fills: dict[int, float] = {}
     if stop_loss_pct > 0:
-        effective = _apply_stop_loss(effective, closes, stop_loss_pct / 100.0, lows)
+        effective, stop_fills = _apply_stop_loss(
+            effective, closes, stop_loss_pct / 100.0, lows, opens
+        )
 
     equity = 1.0
     equity_curve = [equity]
@@ -287,16 +293,20 @@ def simulate_long_only(
         was_in_position = effective[index - 1]
         is_in_position = effective[index]
 
+        # A stop-out bar exits at the stop fill price, not the close.
+        exit_price = stop_fills.get(index, closes[index])
+
         bar_return = 0.0
         if was_in_position:
-            bar_return = closes[index] / closes[index - 1] - 1.0
+            price_out = exit_price if (not is_in_position and index in stop_fills) else closes[index]
+            bar_return = price_out / closes[index - 1] - 1.0
 
         if not was_in_position and is_in_position:
             entry_price = closes[index]
             bar_return -= cost  # pay entry cost on the bar we enter
 
         if was_in_position and not is_in_position and entry_price is not None:
-            gross = closes[index] / entry_price - 1.0
+            gross = exit_price / entry_price - 1.0
             trades.append((1.0 + gross) * (1.0 - cost) ** 2 - 1.0)  # round-trip net
             bar_return -= cost  # pay exit cost on the bar we exit
             entry_price = None
@@ -317,16 +327,24 @@ def _apply_stop_loss(
     closes: list[float],
     stop: float,
     lows: list[float | None] | None,
-) -> list[bool]:
+    opens: list[float | None] | None = None,
+) -> tuple[list[bool], dict[int, float]]:
     """
     Force-exit a position once price falls `stop` (fraction) below its entry.
 
+    Returns the adjusted signal series plus {bar_index: fill_price} for each
+    stop-out. The fill is the stop price when the bar traded through it, or the
+    open when the bar gapped below the stop before trading (you cannot fill
+    better than the open). The stop is tested against the bar low when available
+    (a realistic intraday trigger), otherwise the close — and with close-only
+    data the fill is the close itself, since that is the only known price.
+
     After a stop-out the position stays flat until the underlying signal resets
-    (goes flat, then fires again) so a stopped trade is not re-entered on the very
-    next bar. The stop is tested against the bar low when available (a realistic
-    intraday trigger), otherwise the close.
+    (goes flat, then fires again) so a stopped trade is not re-entered on the
+    very next bar.
     """
     result = list(effective)
+    fills: dict[int, float] = {}
     entry_price: float | None = None
     suppressed = False
     for index in range(len(result)):
@@ -340,12 +358,23 @@ def _apply_stop_loss(
         if entry_price is None:
             entry_price = closes[index]  # entry bar — no stop check yet
             continue
-        low = lows[index] if (lows is not None and lows[index] is not None) else closes[index]
-        if low <= entry_price * (1.0 - stop):
+        stop_price = entry_price * (1.0 - stop)
+        low_known = lows is not None and lows[index] is not None
+        low = lows[index] if low_known else closes[index]
+        if low <= stop_price:
             result[index] = False  # stop hit → exit this bar
+            if not low_known:
+                fill = closes[index]  # close-only data: close is the only price
+            else:
+                bar_open = opens[index] if (opens is not None and opens[index] is not None) else None
+                if bar_open is not None and bar_open < stop_price:
+                    fill = bar_open  # gapped through the stop → filled at the open
+                else:
+                    fill = stop_price
+            fills[index] = fill
             suppressed = True
             entry_price = None
-    return result
+    return result, fills
 
 
 def sma(values: list[float], index: int, window: int) -> float:
