@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Iterable
 
@@ -127,9 +128,15 @@ def prune_experiment_log(
 
     # Rewrite the hot log with only the kept records. The .idx sidecar is left
     # untouched, so dedup still knows about every archived fingerprint.
-    with Path(log_path).open("w", encoding="utf-8") as handle:
+    # Write to a temp file and swap atomically: kept records exist ONLY in the
+    # hot log (the archive holds rejects), so an in-place truncate-then-write
+    # would lose them permanently if the process died mid-rewrite.
+    log_file = Path(log_path)
+    tmp_file = log_file.with_suffix(log_file.suffix + ".tmp")
+    with tmp_file.open("w", encoding="utf-8") as handle:
         for record in keep:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
+    os.replace(tmp_file, log_file)
 
     # Track how many records live outside the hot log so callers can report true
     # totals. archived_total accumulates across prunes.

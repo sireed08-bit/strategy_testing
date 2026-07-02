@@ -348,6 +348,7 @@ def signals(limit: int = 10) -> dict:
             risk_model=s.get("risk_model", {}),
         )
 
+        error_detail: str | None = None
         try:
             bars, _ = load_price_bars_from_csv(csv, symbol)
             sig = build_signals_from_bars(spec, bars)
@@ -368,10 +369,13 @@ def signals(limit: int = 10) -> dict:
             last_close = bars[-1].close if bars else None
 
         except Exception as exc:
+            # Surface WHY: a swallowed error here makes a broken strategy look
+            # permanently quiet instead of visibly failing.
             currently_long = False
             state = "error"
             last_date = None
             last_close = None
+            error_detail = f"{type(exc).__name__}: {exc}"
 
         results.append({
             "strategy": s["name"],
@@ -384,6 +388,7 @@ def signals(limit: int = 10) -> dict:
             "currently_long": currently_long,
             "last_bar_date": last_date,
             "last_close": last_close,
+            "error": error_detail,
         })
 
     active = [r for r in results if r["signal"] in ("entry", "exit")]
@@ -398,9 +403,11 @@ def signals(limit: int = 10) -> dict:
             message=f"{lines}\n\nResearch signals only — not live trade recommendations.",
             priority="high",
         )
+    errored = [r for r in results if r["signal"] == "error"]
     return {
         "signals": results,
         "active_signals": active,
+        "error_count": len(errored),
         "as_of": datetime.now(timezone.utc).isoformat(),
         "last_bar_date": results[0]["last_bar_date"] if results else None,
     }

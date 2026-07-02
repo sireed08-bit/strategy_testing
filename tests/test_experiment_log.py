@@ -72,4 +72,6 @@ def test_prune_keeps_index_so_pruned_combos_are_not_rerun(tmp_path) -> None:
     # Archived record is preserved on disk, and the count is tracked.
     assert archive_path.exists()
     assert archived_total(log_path) == 1
+    # The atomic temp-swap leaves no stray .tmp file behind.
+    assert not log_path.with_suffix(log_path.suffix + ".tmp").exists()
 
