@@ -249,6 +249,74 @@ def robust_results(limit: int = 10) -> dict:
     }
 
 
+# ── final exam (true holdout, never touched by optimisation) ──────────────────
+
+@app.get("/final-exam")
+def final_exam(limit: int = 5) -> dict:
+    """
+    Evaluate the current top robust strategies on the held-out exam tail — the
+    most recent FINAL_EXAM_FRACTION of history that scoring, OOS gating, and
+    auto-research never see. This is the only honest read on whether a champion
+    generalises. Use sparingly: every look at the exam window spends some of its
+    statistical independence, so treat it as a periodic audit, not a metric to
+    optimise against.
+    """
+    from strategy_lab.analysis import top_robust_records
+    from strategy_lab.batch_runner import FINAL_EXAM_FRACTION, final_exam_start_index
+    from strategy_lab.backtest import run_backtest_window
+    from strategy_lab.models import StrategySpec
+    from strategy_lab.scoring import score_metrics
+
+    records = ExperimentLog(_EXPERIMENT_LOG).records()
+    csv = _data_csv()
+    results = []
+    for symbol in _SYMBOLS:
+        scoped = [r for r in records if (r["dataset"].get("symbols") or ["?"])[0] == symbol]
+        for record in top_robust_records(scoped, limit=limit):
+            s = record["strategy"]
+            spec = StrategySpec(
+                family=s["family"],
+                name=s["name"],
+                hypothesis=s.get("hypothesis", ""),
+                rules=s.get("rules", {}),
+                parameters=s["parameters"],
+                risk_model=s.get("risk_model", {}),
+            )
+            bars, _ = load_price_bars_from_csv(csv, symbol)
+            bars = sorted(bars, key=lambda bar: bar.date)
+            exam_start = final_exam_start_index(len(bars))
+            try:
+                exam_metrics = run_backtest_window(spec, bars, exam_start)
+                exam_score = score_metrics(exam_metrics).score
+                results.append({
+                    "strategy": s["name"],
+                    "symbol": symbol,
+                    "optimized_score": record["score"],
+                    "exam_score": exam_score,
+                    "exam_gap": round(record["score"] - exam_score, 2),
+                    "exam_trade_count": exam_metrics["trade_count"],
+                    "exam_return_pct": exam_metrics["annualized_return_pct"],
+                    "exam_max_drawdown_pct": exam_metrics["max_drawdown_pct"],
+                    "parameters": s["parameters"],
+                    "risk_model": s.get("risk_model", {}),
+                })
+            except ValueError as exc:
+                results.append({
+                    "strategy": s["name"], "symbol": symbol,
+                    "optimized_score": record["score"], "error": str(exc),
+                })
+    results.sort(key=lambda r: r.get("exam_score", -1.0), reverse=True)
+    return {
+        "exam_fraction": FINAL_EXAM_FRACTION,
+        "note": (
+            "Exam tail is excluded from all scoring/OOS/hill-climbing. "
+            "Low exam_trade_count means the read is weak, not that the strategy failed."
+        ),
+        "results": results,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # ── live signals ─────────────────────────────────────────────────────────────
 
 @app.get("/signals")

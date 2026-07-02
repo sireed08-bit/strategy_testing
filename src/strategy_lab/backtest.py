@@ -60,6 +60,58 @@ def run_backtest(
     }
 
 
+def run_backtest_window(
+    strategy: StrategySpec,
+    bars: list[PriceBar],
+    start_index: int,
+    cost_bps: float = COST_BPS,
+) -> dict[str, float]:
+    """
+    Backtest only bars[start_index:], with indicators warmed on the FULL history.
+
+    Running a strategy cold on a short window is not a fair evaluation: an
+    SMA-200 filter spends 200 bars warming up and blocks every entry meanwhile,
+    so a 30% out-of-sample slice can shrink to a handful of tradable bars for
+    exactly the long-lookback combos that most need scrutiny. Here signals are
+    computed over the whole series first, then only the window is simulated —
+    the position state resets flat at the boundary, but every indicator carries
+    its full history into bar one of the window.
+    """
+    if not bars:
+        raise ValueError("Backtest needs at least one price bar.")
+    ordered = sorted(bars, key=lambda bar: bar.date)
+    if not 0 <= start_index < len(ordered) - 1:
+        raise ValueError(f"start_index {start_index} outside usable range for {len(ordered)} bars.")
+
+    signals = build_signals_from_bars(strategy, ordered)
+    closes = [bar.close for bar in ordered]
+    lows = [bar.low for bar in ordered]
+    opens = [bar.open for bar in ordered]
+    stop_loss_pct = float(strategy.risk_model.get("stop_loss_pct", 0))
+
+    window_signals = signals[start_index:]
+    equity_curve, daily_returns, trades = simulate_long_only(
+        closes[start_index:],
+        window_signals,
+        cost_bps,
+        stop_loss_pct=stop_loss_pct,
+        lows=lows[start_index:],
+        opens=opens[start_index:],
+    )
+    return {
+        "annualized_return_pct": annualized_return_pct(equity_curve),
+        "max_drawdown_pct": max_drawdown_pct(equity_curve),
+        "sharpe_ratio": sharpe_ratio(daily_returns),
+        "sortino_ratio": sortino_ratio(daily_returns),
+        "profit_factor": profit_factor(trades),
+        "trade_count": float(len(trades)),
+        "win_rate_pct": win_rate_pct(trades),
+        "exposure_pct": exposure_pct(window_signals),
+        "regime_consistency": chunk_consistency(daily_returns),
+        "robustness_score": chunk_consistency(daily_returns),
+    }
+
+
 # Strategy families that need OHLCV beyond close (gap, true range, volume).
 _OHLCV_FAMILIES = {"sma_reversion", "gap_momentum"}
 

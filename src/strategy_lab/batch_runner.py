@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from strategy_lab.backtest import PriceBar, run_backtest
+from strategy_lab.backtest import PriceBar, run_backtest, run_backtest_window
 from strategy_lab.data_loader import load_price_bars_from_csv, synthetic_price_bars
 from strategy_lab.experiment_generator import fresh_strategy_variations
 from strategy_lab.experiment_log import DuplicateExperimentError, ExperimentLog
@@ -75,6 +75,32 @@ def run_backtest_batch(
     return run_record
 
 
+# ── final-exam holdout ────────────────────────────────────────────────────────
+# The most recent FINAL_EXAM_FRACTION of history is excluded from EVERYTHING the
+# optimisation loop can see: full-sample scoring, the train/test OOS gate, and
+# auto-research hill-climbing. The 30% OOS window stops being "unseen" after
+# hundreds of hill-climb rounds select against it; this tail stays genuinely
+# unseen because nothing in the loop ever touches it. Evaluate the current best
+# strategies on it sparingly (via /final-exam) — every look spends some of its
+# statistical honesty.
+FINAL_EXAM_FRACTION = 0.15
+_MIN_TRIMMED_BARS = 120  # don't trim tiny (test/synthetic) datasets into uselessness
+
+
+def final_exam_start_index(total_bars: int) -> int:
+    """First bar index of the held-out exam tail for a series of this length."""
+    return int(round(total_bars * (1.0 - FINAL_EXAM_FRACTION)))
+
+
+def trim_final_exam(bars: list[PriceBar]) -> list[PriceBar]:
+    """Return the optimisation-visible slice: everything before the exam tail."""
+    ordered = sorted(bars, key=lambda bar: bar.date)
+    start = final_exam_start_index(len(ordered))
+    if start < _MIN_TRIMMED_BARS:
+        return ordered  # dataset too small to afford a holdout — use everything
+    return ordered[:start]
+
+
 def evaluate_and_log_strategies(
     strategies: list[StrategySpec],
     bars: list[PriceBar],
@@ -84,6 +110,8 @@ def evaluate_and_log_strategies(
     """Backtest, score, OOS-validate and append each spec. Reused by auto-research."""
     created = skipped = errored = 0
     notes: list[str] = []
+    # Everything below sees only the pre-exam history; the tail stays unseen.
+    bars = trim_final_exam(bars)
     for strategy in strategies:
         try:
             metrics = run_backtest(strategy, bars)
@@ -138,12 +166,16 @@ def out_of_sample_validation(
 ) -> tuple[dict, list[str]]:
     ordered = sorted(bars, key=lambda bar: bar.date)
     split = int(len(ordered) * TRAIN_FRACTION)
-    train, test = ordered[:split], ordered[split:]
-    if len(train) < _MIN_SEGMENT_BARS or len(test) < _MIN_SEGMENT_BARS:
+    train = ordered[:split]
+    if len(train) < _MIN_SEGMENT_BARS or len(ordered) - split < _MIN_SEGMENT_BARS:
         return {"status": "insufficient_data"}, []
 
     train_score = score_metrics(run_backtest(strategy, train)).score
-    oos_metrics = run_backtest(strategy, test)
+    # Warm-indicator evaluation: signals are computed over the full series, then
+    # only the held-out window is simulated. Running the strategy cold on the
+    # test slice let long-lookback combos (e.g. sma_filter=200) burn most of the
+    # window on warmup, leaving OOS gates resting on a handful of trades.
+    oos_metrics = run_backtest_window(strategy, ordered, split)
     oos = score_metrics(oos_metrics)
     degradation = round(train_score - oos.score, 2)
 
@@ -156,6 +188,7 @@ def out_of_sample_validation(
         "degradation": degradation,
         "oos_trade_count": oos_metrics["trade_count"],
         "oos_max_drawdown_pct": oos_metrics["max_drawdown_pct"],
+        "warm_indicators": True,
     }
 
     weaknesses: list[str] = []

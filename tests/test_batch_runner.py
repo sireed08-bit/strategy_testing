@@ -1,5 +1,10 @@
-from strategy_lab.backtest import PriceBar
-from strategy_lab.batch_runner import out_of_sample_validation, run_backtest_batch
+from strategy_lab.backtest import PriceBar, run_backtest_window
+from strategy_lab.batch_runner import (
+    final_exam_start_index,
+    out_of_sample_validation,
+    run_backtest_batch,
+    trim_final_exam,
+)
 from strategy_lab.experiment_log import ExperimentLog
 from strategy_lab.models import StrategySpec
 from strategy_lab.run_ledger import ResearchRunLedger
@@ -55,6 +60,56 @@ def test_out_of_sample_validation_reports_train_and_test_scores() -> None:
     assert "train_score" in validation
     assert "oos_score" in validation
     assert isinstance(weaknesses, list)
+
+
+def test_run_backtest_window_keeps_indicators_warm() -> None:
+    """A long-SMA-filtered strategy must still trade in a window it could never
+    warm up on cold: signals come from the full history, not the slice."""
+    from datetime import date, timedelta
+    import math
+
+    start = date(2020, 1, 1)
+    bars = [
+        PriceBar(
+            date=(start + timedelta(days=d)).isoformat(),
+            symbol="QQQ",
+            close=100.0 + d * 0.1 + 8.0 * math.sin(d * 0.25),
+        )
+        for d in range(600)
+    ]
+    strategy = StrategySpec(
+        family="mean_reversion",
+        name="rsi_pullback",
+        hypothesis="",
+        rules={},
+        # sma_filter=200 with a 180-bar window: cold evaluation cannot warm up at
+        # all (sma() returns the current close during warmup, blocking entries).
+        parameters={"rsi_period": 7, "entry_rsi": 45, "exit_rsi": 60, "sma_filter": 200},
+        risk_model={"max_hold_days": 10},
+    )
+    split = 420  # window = bars[420:600], 180 bars < 200-bar warmup
+    from strategy_lab.backtest import run_backtest
+
+    cold = run_backtest(strategy, bars[split:])
+    warm = run_backtest_window(strategy, bars, split)
+    assert cold["trade_count"] == 0.0  # cold slice never clears the SMA warmup
+    assert warm["trade_count"] > 0.0  # warm indicators trade from bar one
+
+
+def test_trim_final_exam_reserves_the_tail() -> None:
+    bars = [
+        PriceBar(date=f"2021-{m:02d}-{d:02d}", symbol="SPY", close=100.0)
+        for m in range(1, 13)
+        for d in range(1, 29)
+    ]  # 336 bars
+    trimmed = trim_final_exam(bars)
+    assert len(trimmed) == final_exam_start_index(len(bars))
+    assert len(trimmed) < len(bars)
+    # The trimmed slice is the OLDEST portion — the newest bars are the exam.
+    assert trimmed[-1].date < sorted(bars, key=lambda b: b.date)[-1].date
+
+    tiny = bars[:100]  # too small to afford a holdout
+    assert len(trim_final_exam(tiny)) == 100
 
 
 def test_out_of_sample_validation_flags_insufficient_data() -> None:
