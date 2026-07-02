@@ -67,22 +67,43 @@ def test_perturb_generates_neighbors() -> None:
     assert _perturb("text") == []
 
 
+def _record(
+    name: str,
+    params: dict,
+    score: float,
+    *,
+    symbol: str = "QQQ",
+    grade: str = "promising",
+    oos_score: float | None = 70.0,
+    oos_trades: float = 12.0,
+    oos_status: str = "evaluated",
+    risk: dict | None = None,
+) -> dict:
+    validation = (
+        {"status": oos_status, "oos_score": oos_score, "oos_trade_count": oos_trades}
+        if oos_score is not None
+        else {}
+    )
+    return {
+        "strategy": {
+            "name": name,
+            "family": "mean_reversion",
+            "hypothesis": "",
+            "rules": {},
+            "parameters": params,
+            "risk_model": risk if risk is not None else {"max_hold_days": 15},
+        },
+        "dataset": {"symbols": [symbol]},
+        "score": score,
+        "grade": grade,
+        "validation": validation,
+    }
+
+
 def test_propose_refinements_creates_fresh_neighbors() -> None:
     dataset = DatasetSpec(name="t", symbols=["QQQ"], timeframe="1D", start="2021-01-01", end="2021-12-31")
     records = [
-        {
-            "strategy": {
-                "name": "rsi_pullback",
-                "family": "mean_reversion",
-                "hypothesis": "",
-                "rules": {},
-                "parameters": {"entry_rsi": 40, "exit_rsi": 65, "rsi_period": 14, "sma_filter": 200},
-                "risk_model": {"max_hold_days": 15},
-            },
-            "dataset": {"symbols": ["QQQ"]},
-            "score": 72.0,
-            "grade": "promising",
-        }
+        _record("rsi_pullback", {"entry_rsi": 40, "exit_rsi": 65, "rsi_period": 14, "sma_filter": 200}, 72.0)
     ]
     proposals = propose_refinements(records, dataset, existing_fingerprints=set(), top_k=3, max_new=20)
     assert proposals
@@ -93,3 +114,59 @@ def test_propose_refinements_creates_fresh_neighbors() -> None:
         combined = {**p.parameters, **p.risk_model}
         diffs = sum(1 for k in seed if combined.get(k) != seed[k])
         assert diffs == 1
+
+
+def test_propose_refinements_skips_oos_unproven_seeds() -> None:
+    """The documented guarantee: only OOS-validated records may seed refinement."""
+    dataset = DatasetSpec(name="t", symbols=["QQQ"], timeframe="1D", start="2021-01-01", end="2021-12-31")
+    base_params = {"entry_rsi": 40, "exit_rsi": 65, "rsi_period": 14, "sma_filter": 200}
+    ineligible = [
+        _record("rsi_pullback", base_params, 90.0, oos_score=None),  # never validated
+        _record("rsi_pullback", base_params, 89.0, oos_status="inconclusive_few_oos_trades"),
+        _record("rsi_pullback", base_params, 88.0, oos_score=30.0),  # failed OOS
+        _record("rsi_pullback", base_params, 87.0, oos_trades=2.0),  # too few OOS trades
+        _record("rsi_pullback", base_params, 86.0, grade="reject"),
+    ]
+    assert propose_refinements(ineligible, dataset, existing_fingerprints=set(), top_k=6, max_new=20) == []
+
+
+def test_seed_ranking_prefers_weakest_evidence_over_raw_score() -> None:
+    """A lower-scored seed with strong OOS outranks a high scorer with weak OOS."""
+    from strategy_lab.auto_research import select_seeds
+
+    flashy = _record(
+        "rsi_pullback", {"entry_rsi": 40, "exit_rsi": 86, "rsi_period": 14, "sma_filter": 200},
+        82.0, oos_score=47.0,
+    )
+    solid = _record(
+        "rsi_pullback", {"entry_rsi": 35, "exit_rsi": 60, "rsi_period": 14, "sma_filter": 200},
+        71.0, oos_score=72.0,
+    )
+    seeds = select_seeds([flashy, solid], top_k=2)
+    assert seeds[0]["strategy"]["parameters"]["exit_rsi"] == 60  # solid first
+
+
+def test_seed_pool_caps_one_family_from_flooding() -> None:
+    from strategy_lab.auto_research import MAX_SEEDS_PER_FAMILY, select_seeds
+
+    corner = [
+        _record("rsi_pullback", {"entry_rsi": 40, "exit_rsi": 60 + i, "rsi_period": 14, "sma_filter": 200}, 78.0 - i)
+        for i in range(5)
+    ]
+    other = [_record("gap_momentum", {"gap_pct": 1.0}, 66.0, risk={"max_hold_days": 3})]
+    seeds = select_seeds(corner + other, top_k=4)
+    by_name = [s["strategy"]["name"] for s in seeds]
+    assert by_name.count("rsi_pullback") <= MAX_SEEDS_PER_FAMILY
+    assert "gap_momentum" in by_name  # the minority family still gets explored
+
+
+def test_perturbation_respects_rsi_bounds() -> None:
+    """exit_rsi must never be pushed past 99 — an RSI exit above 100 can never fire."""
+    dataset = DatasetSpec(name="t", symbols=["QQQ"], timeframe="1D", start="2021-01-01", end="2021-12-31")
+    records = [
+        _record("rsi_pullback", {"entry_rsi": 40, "exit_rsi": 95, "rsi_period": 14, "sma_filter": 200}, 75.0)
+    ]
+    proposals = propose_refinements(records, dataset, existing_fingerprints=set(), top_k=1, max_new=50)
+    for p in proposals:
+        assert p.parameters["exit_rsi"] <= 99
+        assert p.parameters["entry_rsi"] <= 99
