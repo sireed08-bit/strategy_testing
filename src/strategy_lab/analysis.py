@@ -93,6 +93,35 @@ def annotate_stability(records: list[dict]) -> list[dict]:
     return annotated
 
 
+def cross_symbol_support(records: list[dict]) -> dict[str, int]:
+    """
+    For each record, count how many OTHER symbols hold the SAME strategy combo
+    (identical name + parameters + risk_model) at watch grade or better.
+
+    A real edge on one symbol should at least whisper on its siblings; a combo
+    that only ever works on exactly one symbol is usually a fluke of that
+    symbol's particular price path. Returns {record fingerprint: support count}.
+    """
+    combo_symbols: dict[tuple, set[str]] = defaultdict(set)
+    for record in records:
+        if record.get("grade") in {"watch", "promising", "candidate"}:
+            key = (
+                record["strategy"]["name"],
+                tuple(sorted(_combined_params(record).items())),
+            )
+            combo_symbols[key].add(_symbol(record))
+
+    support: dict[str, int] = {}
+    for record in records:
+        key = (
+            record["strategy"]["name"],
+            tuple(sorted(_combined_params(record).items())),
+        )
+        others = combo_symbols.get(key, set()) - {_symbol(record)}
+        support[record.get("fingerprint", id(record))] = len(others)
+    return support
+
+
 def top_robust_records(records: list[dict], limit: int = 10) -> list[dict]:
     """Rank by stability score (then raw score), deduplicated by tunable vector."""
     annotated = annotate_stability(records)

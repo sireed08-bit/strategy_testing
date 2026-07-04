@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from strategy_lab.analysis import top_robust_records
+from strategy_lab.analysis import cross_symbol_support, top_robust_records
 from strategy_lab.batch_runner import (
     MIN_OOS_TRADES,
     OOS_FAIL_SCORE,
@@ -90,11 +90,27 @@ def _seed_rank_key(record: dict) -> float:
     return min(record.get("stability_score", record["score"]), oos)
 
 
-def select_seeds(scoped_records: list[dict], top_k: int) -> list[dict]:
-    """OOS-eligible, family-diverse seeds ranked by their weakest evidence."""
+def select_seeds(
+    scoped_records: list[dict],
+    top_k: int,
+    symbol_support: dict[str, int] | None = None,
+) -> list[dict]:
+    """
+    OOS-eligible, family-diverse seeds ranked by their weakest evidence, with
+    cross-symbol confirmation as the leading sort key: a combo that also holds
+    up on sibling symbols outranks an equally-scored single-symbol result,
+    because symbol-specific flukes rarely replicate across instruments.
+    """
+    support = symbol_support or {}
     pool = top_robust_records(scoped_records, limit=top_k * 5)
     eligible = [record for record in pool if _eligible_seed(record)]
-    eligible.sort(key=_seed_rank_key, reverse=True)
+    eligible.sort(
+        key=lambda record: (
+            support.get(record.get("fingerprint"), 0) > 0,
+            _seed_rank_key(record),
+        ),
+        reverse=True,
+    )
 
     seeds: list[dict] = []
     per_family: dict[str, int] = {}
@@ -127,8 +143,11 @@ def propose_refinements(
 ) -> list[StrategySpec]:
     """Neighbour specs around the top OOS-validated results for this symbol."""
     symbol = (dataset.symbols or ["?"])[0]
+    # Cross-symbol support must be computed on the FULL record set (all symbols)
+    # before scoping, or no sibling evidence would ever be visible.
+    support = cross_symbol_support(records)
     scoped = [r for r in records if (r["dataset"].get("symbols") or ["?"])[0] == symbol]
-    seeds = select_seeds(scoped, top_k)
+    seeds = select_seeds(scoped, top_k, symbol_support=support)
 
     proposals: list[StrategySpec] = []
     for seed in seeds:

@@ -160,6 +160,48 @@ def test_seed_pool_caps_one_family_from_flooding() -> None:
     assert "gap_momentum" in by_name  # the minority family still gets explored
 
 
+def test_cross_symbol_support_counts_sibling_symbols() -> None:
+    from strategy_lab.analysis import cross_symbol_support
+
+    params = {"entry_rsi": 40, "exit_rsi": 60, "rsi_period": 14}
+    qqq = _record("rsi_pullback", params, 70.0, symbol="QQQ")
+    qqq["fingerprint"] = "fp-qqq"
+    iwm = _record("rsi_pullback", params, 66.0, symbol="IWM")
+    iwm["fingerprint"] = "fp-iwm"
+    spy_reject = _record("rsi_pullback", params, 30.0, symbol="SPY", grade="reject")
+    spy_reject["fingerprint"] = "fp-spy"
+    lonely = _record("rsi_pullback", {**params, "entry_rsi": 20}, 68.0, symbol="QQQ")
+    lonely["fingerprint"] = "fp-lonely"
+
+    support = cross_symbol_support([qqq, iwm, spy_reject, lonely])
+    assert support["fp-qqq"] == 1  # IWM confirms; reject-grade SPY does not count
+    assert support["fp-iwm"] == 1
+    assert support["fp-lonely"] == 0  # different params — no siblings
+
+
+def test_select_seeds_prefers_cross_symbol_confirmed_combos() -> None:
+    from strategy_lab.auto_research import select_seeds
+
+    params_confirmed = {"entry_rsi": 35, "exit_rsi": 60, "rsi_period": 7, "sma_filter": 50}
+    confirmed = _record("rsi_pullback", params_confirmed, 66.0, oos_score=66.0)
+    confirmed["fingerprint"] = "fp-confirmed"
+    higher_but_lonely = _record(
+        "rsi_pullback",
+        {"entry_rsi": 40, "exit_rsi": 70, "rsi_period": 14, "sma_filter": 200},
+        74.0,
+        oos_score=74.0,
+    )
+    higher_but_lonely["fingerprint"] = "fp-lonely"
+
+    seeds = select_seeds(
+        [confirmed, higher_but_lonely],
+        top_k=2,
+        symbol_support={"fp-confirmed": 2, "fp-lonely": 0},
+    )
+    # The cross-symbol-confirmed combo leads despite the lower score.
+    assert seeds[0]["fingerprint"] == "fp-confirmed"
+
+
 def test_perturbation_respects_rsi_bounds() -> None:
     """exit_rsi must never be pushed past 99 — an RSI exit above 100 can never fire."""
     dataset = DatasetSpec(name="t", symbols=["QQQ"], timeframe="1D", start="2021-01-01", end="2021-12-31")

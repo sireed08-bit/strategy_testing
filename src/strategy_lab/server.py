@@ -227,9 +227,10 @@ def robust_results(limit: int = 10) -> dict:
     Like /top-results but ranked by parameter-neighbourhood stability instead of
     raw score, so robust plateaus outrank fragile single-combo spikes.
     """
-    from strategy_lab.analysis import top_robust_records
+    from strategy_lab.analysis import cross_symbol_support, top_robust_records
 
     records = ExperimentLog(_EXPERIMENT_LOG).records()
+    support = cross_symbol_support(records)
     best = top_robust_records(records, limit=limit)
     return {
         "results": [
@@ -240,6 +241,7 @@ def robust_results(limit: int = 10) -> dict:
                 "stability_score": r.get("stability_score"),
                 "neighbor_mean_score": r.get("neighbor_mean_score"),
                 "neighbor_count": r.get("neighbor_count"),
+                "symbol_support": support.get(r.get("fingerprint"), 0),
                 "grade": r["grade"],
                 "parameters": r["strategy"]["parameters"],
                 "risk_model": r["strategy"].get("risk_model", {}),
