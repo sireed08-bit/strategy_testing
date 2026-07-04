@@ -136,9 +136,14 @@ def _deep_csv() -> Path:
 def _select_csv(dataset: str) -> Path:
     if dataset == "deep":
         return _deep_csv()
+    if dataset == "scanner":
+        p = _scanner_csv()
+        if not p.exists():
+            raise HTTPException(500, f"Scanner data not found at {p}. Call /scan-refresh first.")
+        return p
     if dataset in ("", "default"):
         return _data_csv()
-    raise HTTPException(400, f"Unknown dataset '{dataset}'. Use 'default' or 'deep'.")
+    raise HTTPException(400, f"Unknown dataset '{dataset}'. Use 'default', 'deep' or 'scanner'.")
 
 
 _VINTAGE_FILE = _ROOT / "data" / "experiments" / "dataset_vintage.json"
@@ -324,6 +329,114 @@ def significance(limit: int = 8) -> dict:
             **stats,
         })
     return {"results": results, "as_of": datetime.now(timezone.utc).isoformat()}
+
+
+# ── validated champions ───────────────────────────────────────────────────────
+
+@app.get("/champions")
+def champions(limit: int = 10) -> dict:
+    """
+    The generalisation-based bar a strategy must clear to be called a champion
+    (replaces "score >= 80" as the meaningful goal):
+      - optimized score >= the promising threshold (currently 65)
+      - positive excess return over buy-and-hold
+      - final-exam gap <= 10 points with >= 10 exam trades
+    A number the optimiser cannot game: it requires performing on data nothing
+    in the loop ever touched, and beating doing nothing.
+    """
+    from strategy_lab.scoring import load_criteria
+
+    promising_floor = float(load_criteria()["grade_thresholds"]["promising"])
+    exam = final_exam(limit=limit)
+    all_records = ExperimentLog(_EXPERIMENT_LOG).records()
+    champions_list = []
+    for row in exam["results"]:
+        if row.get("error"):
+            continue
+        excess = None
+        # exam rows don't carry optimized metrics; look up excess from the log
+        for record in all_records:
+            if (
+                record["strategy"]["name"] == row["strategy"]
+                and (record["dataset"]["symbols"] or ["?"])[0] == row["symbol"]
+                and record["strategy"]["parameters"] == row["parameters"]
+            ):
+                excess = record["metrics"].get("excess_return_pct")
+                break
+        qualified = (
+            row["optimized_score"] >= promising_floor
+            and (excess or 0) > 0
+            and row["exam_gap"] <= 10
+            and row["exam_trade_count"] >= 10
+        )
+        if qualified:
+            champions_list.append({**row, "excess_return_pct": excess})
+    if champions_list:
+        _notify(
+            title=f"Strategy Lab — {len(champions_list)} validated champion(s)",
+            message="\n".join(
+                f"{c['strategy']}/{c['symbol']} opt={c['optimized_score']} exam={c['exam_score']} excess={c['excess_return_pct']:+.1f}%"
+                for c in champions_list[:5]
+            ),
+            priority="high",
+        )
+    return {
+        "criteria": {
+            "optimized_score_min": promising_floor,
+            "excess_return_positive": True,
+            "exam_gap_max": 10,
+            "exam_trades_min": 10,
+        },
+        "champions": champions_list,
+        "candidates_reviewed": len(exam["results"]),
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ── scanner-universe backtesting ──────────────────────────────────────────────
+
+@app.post("/run-scanner-batch")
+def run_scanner_batch(symbols: str = "", limit: int = 400) -> dict:
+    """
+    Run the strategy grid on single names from the scanner universe — where
+    dispersion and inefficiency actually live, unlike the arbitraged-flat index
+    ETFs. Default subset: liquid mega-caps + two sector ETFs. Scanner history
+    starts 2022, so expect thinner OOS windows; the same validation machinery
+    applies unchanged.
+    """
+    default_subset = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,JPM,XOM,UNH,XLE,XLF"
+    picked = [s.strip().upper() for s in (symbols or default_subset).split(",") if s.strip()]
+    csv = _select_csv("scanner")
+    end_cap = _vintage_end("scanner")
+    date_str = datetime.now(timezone.utc).date().isoformat()
+    results = []
+    with _batch_write_lock():
+        for symbol in picked:
+            try:
+                result = run_backtest_batch(
+                    experiment_log_path=_EXPERIMENT_LOG,
+                    run_log_path=_RUN_LOG,
+                    report_path=_REPORT,
+                    purpose=f"Scanner-universe batch — {symbol} — {date_str}",
+                    limit=limit,
+                    data_csv=csv,
+                    symbol=symbol,
+                    end_cap=end_cap,
+                )
+                results.append({
+                    "symbol": symbol,
+                    "status": "ok",
+                    "experiments_created": result.experiments_created,
+                })
+            except Exception as exc:
+                results.append({"symbol": symbol, "status": "error", "error": str(exc)})
+    created_total = sum(r.get("experiments_created", 0) for r in results)
+    _notify(
+        title=f"Strategy Lab — scanner-universe batch ({date_str})",
+        message=f"{created_total} experiments across {len(picked)} single names.",
+        priority="default",
+    )
+    return {"runs": results, "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 # ── per-year regime breakdown ─────────────────────────────────────────────────
@@ -872,10 +985,13 @@ def _build_suggestion_prompt(records: list[dict]) -> str:
     best_lines = "\n".join(
         f"  {i + 1}. {r['strategy']['name']} on {(r['dataset']['symbols'] or ['?'])[0]}: "
         f"score={r['score']}, "
-        f"return={r['metrics'].get('annualized_return_pct', 0):.1f}%, "
+        f"return={r['metrics'].get('annualized_return_pct', 0):.1f}% "
+        f"(buy-and-hold {r['metrics'].get('benchmark_return_pct', 0):.1f}%, "
+        f"EXCESS {r['metrics'].get('excess_return_pct', 0):+.1f}%), "
         f"drawdown={r['metrics'].get('max_drawdown_pct', 0):.1f}%, "
         f"sharpe={r['metrics'].get('sharpe_ratio', 0):.2f}, "
         f"trades={int(r['metrics'].get('trade_count', 0))}, "
+        f"oos={((r.get('validation') or {}).get('oos_score'))}, "
         f"params={r['strategy']['parameters']}"
         for i, r in enumerate(best)
     )
@@ -888,6 +1004,17 @@ def _build_suggestion_prompt(records: list[dict]) -> str:
 
     return f"""You are a quantitative strategy research assistant. Analyze these backtest results and \
 provide specific, actionable research suggestions.
+
+## How this lab defines "good" (read carefully — it changed)
+- Results are NET of 5bps/side costs with T+1 fills and realistic stop fills.
+- EXCESS return (strategy minus buy-and-hold on the same bars) carries heavy \
+scoring weight: a strategy that loses to simply holding the symbol is NOT a \
+finding, whatever its absolute return. Most long-only timing on liquid index \
+ETFs fails this bar — that is expected, not a bug.
+- Every result is out-of-sample gated (train 70% / warm-indicator test 30%), \
+and the most recent 15% of history is a held-out final exam nothing optimises \
+against. Cross-symbol confirmation and bootstrap significance exist as extra \
+filters. Suggest strategies that could survive ALL of that, not just fit.
 
 ## Research State ({datetime.now(timezone.utc).date().isoformat()})
 
@@ -910,9 +1037,9 @@ Provide 4-6 specific, evidence-based research suggestions. For each:
 2. **Why**: what the results above suggest about this direction
 3. **Expected outcome**: likely grade change or what the experiment would reveal
 
-Focus on achieving the first candidate-grade result (score ≥ 80). Be concrete — \
-cite specific parameter values, thresholds, or data decisions. Do not repeat \
-what has already been exhaustively tested in the results above."""
+Prioritise POSITIVE EXCESS RETURN with out-of-sample survival over raw score. \
+Be concrete — cite specific parameter values, thresholds, or data decisions. \
+Do not repeat what has already been exhaustively tested in the results above."""
 
 
 # ── market scanner ────────────────────────────────────────────────────────────
