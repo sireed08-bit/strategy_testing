@@ -82,6 +82,28 @@ def assemble_metrics(
     }
 
 
+def backtest_trades(
+    strategy: StrategySpec,
+    bars: list[PriceBar],
+    cost_bps: float = COST_BPS,
+) -> list[float]:
+    """Just the per-trade net returns — used by significance testing."""
+    if not bars:
+        return []
+    ordered = sorted(bars, key=lambda bar: bar.date)
+    closes = [bar.close for bar in ordered]
+    signals = build_signals_from_bars(strategy, ordered)
+    _, _, trades = simulate_long_only(
+        closes,
+        signals,
+        cost_bps,
+        stop_loss_pct=float(strategy.risk_model.get("stop_loss_pct", 0)),
+        lows=[bar.low for bar in ordered],
+        opens=[bar.open for bar in ordered],
+    )
+    return trades
+
+
 def run_backtest_window(
     strategy: StrategySpec,
     bars: list[PriceBar],

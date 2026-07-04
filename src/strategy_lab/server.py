@@ -252,6 +252,54 @@ def robust_results(limit: int = 10) -> dict:
     }
 
 
+# ── statistical significance of the top results ───────────────────────────────
+
+@app.get("/significance")
+def significance(limit: int = 8) -> dict:
+    """
+    Bootstrap test on each top robust strategy's trades: could its average
+    trade be zero-edge luck? Trades are re-derived on the same optimisation
+    window the record was scored on (final-exam tail excluded). p near 0.5 =
+    indistinguishable from noise; and with ~30k experiments run, even p=0.01
+    results appear by chance — a filter, not a proof.
+    """
+    from strategy_lab.analysis import top_robust_records
+    from strategy_lab.backtest import backtest_trades
+    from strategy_lab.batch_runner import trim_final_exam
+    from strategy_lab.models import StrategySpec
+    from strategy_lab.significance import bootstrap_trade_significance
+
+    records = ExperimentLog(_EXPERIMENT_LOG).records()
+    csv = _data_csv()
+    bars_cache: dict = {}
+    results = []
+    for record in top_robust_records(records, limit=limit):
+        s = record["strategy"]
+        symbol = (record["dataset"]["symbols"] or ["?"])[0]
+        if symbol not in bars_cache:
+            bars, _ = load_price_bars_from_csv(csv, symbol)
+            bars_cache[symbol] = trim_final_exam(bars)
+        spec = StrategySpec(
+            family=s["family"],
+            name=s["name"],
+            hypothesis=s.get("hypothesis", ""),
+            rules=s.get("rules", {}),
+            parameters=s["parameters"],
+            risk_model=s.get("risk_model", {}),
+        )
+        trades = backtest_trades(spec, bars_cache[symbol])
+        stats = bootstrap_trade_significance(trades)
+        results.append({
+            "strategy": s["name"],
+            "symbol": symbol,
+            "score": record["score"],
+            "grade": record["grade"],
+            "parameters": s["parameters"],
+            **stats,
+        })
+    return {"results": results, "as_of": datetime.now(timezone.utc).isoformat()}
+
+
 # ── final exam (true holdout, never touched by optimisation) ──────────────────
 
 @app.get("/final-exam")
