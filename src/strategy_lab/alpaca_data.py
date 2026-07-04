@@ -43,6 +43,7 @@ def download_stock_bars_csv(
     output_path: Path,
     timeframe: str = "1Day",
     feed: str = "iex",
+    adjustment: str = "split",
     credentials: AlpacaCredentials | None = None,
 ) -> int:
     active_credentials = credentials or credentials_from_env()
@@ -52,6 +53,7 @@ def download_stock_bars_csv(
         end=end,
         timeframe=timeframe,
         feed=feed,
+        adjustment=adjustment,
         credentials=active_credentials,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +86,7 @@ def fetch_stock_bars(
     timeframe: str,
     feed: str,
     credentials: AlpacaCredentials,
+    adjustment: str = "split",
 ) -> list[dict[str, Any]]:
     if not symbols:
         raise ValueError("At least one symbol is required.")
@@ -97,6 +100,7 @@ def fetch_stock_bars(
             end=end,
             timeframe=timeframe,
             feed=feed,
+            adjustment=adjustment,
             credentials=credentials,
             next_page_token=next_page_token,
         )
@@ -117,14 +121,21 @@ def request_stock_bars_page(
     timeframe: str,
     feed: str,
     credentials: AlpacaCredentials,
+    adjustment: str = "split",
     next_page_token: str | None = None,
 ) -> dict[str, Any]:
+    # adjustment="split" is essential: Alpaca defaults to RAW prices, which put
+    # phantom crashes at every stock split (NVDA 10:1 in 2024 showed as a fake
+    # -90% overnight move and polluted every forward-return/IC calculation).
+    # Deliberately NOT "all": dividend adjustment would silently alter the
+    # backtest ETFs' price history under unchanged dataset fingerprints.
     query = {
         "symbols": ",".join(symbols),
         "timeframe": timeframe,
         "start": start,
         "end": end,
         "feed": feed,
+        "adjustment": adjustment,
         "limit": "10000",
     }
     if next_page_token:
