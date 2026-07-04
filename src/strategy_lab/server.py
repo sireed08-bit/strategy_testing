@@ -126,6 +126,21 @@ def _data_csv() -> Path:
     return p
 
 
+def _deep_csv() -> Path:
+    p = _private_storage() / "data" / "market_data" / "yahoo_deep_etfs.csv"
+    if not p.exists():
+        raise HTTPException(500, f"Deep history not found at {p}. Call /refresh-deep-data first.")
+    return p
+
+
+def _select_csv(dataset: str) -> Path:
+    if dataset == "deep":
+        return _deep_csv()
+    if dataset in ("", "default"):
+        return _data_csv()
+    raise HTTPException(400, f"Unknown dataset '{dataset}'. Use 'default' or 'deep'.")
+
+
 def _private_state_repo() -> Path:
     override = _env("STRATEGY_PRIVATE_STATE_REPO")
     return Path(override) if override else _ROOT.parent / "strategy_testing_private_state"
@@ -511,6 +526,7 @@ class BatchRequest(BaseModel):
     symbol: str = "SPY"
     limit: int = 400
     purpose: str = ""
+    dataset: str = "default"
 
 
 @app.post("/run-batch")
@@ -526,7 +542,7 @@ def run_batch(req: BatchRequest) -> dict:
                 report_path=_REPORT,
                 purpose=purpose,
                 limit=req.limit,
-                data_csv=_data_csv(),
+                data_csv=_select_csv(req.dataset),
                 symbol=req.symbol,
             )
         return result.to_dict()
@@ -539,13 +555,13 @@ def run_batch(req: BatchRequest) -> dict:
 # ── run all 4 symbols (main autonomous action) ────────────────────────────────
 
 @app.post("/run-all")
-def run_all(limit: int = 400) -> dict:
+def run_all(limit: int = 400, dataset: str = "default") -> dict:
     with _batch_write_lock():
-        return _run_all_locked(limit)
+        return _run_all_locked(limit, dataset)
 
 
-def _run_all_locked(limit: int) -> dict:
-    csv = _data_csv()
+def _run_all_locked(limit: int, dataset: str = "default") -> dict:
+    csv = _select_csv(dataset)
     date_str = datetime.now(timezone.utc).date().isoformat()
     results = []
     for symbol in _SYMBOLS:
@@ -677,6 +693,29 @@ def refresh_data(start: str = "2020-01-01", force: bool = False) -> dict:
         return {"status": "ok", "rows_written": rows, "path": str(output), "end_date": end}
     except Exception as exc:
         raise HTTPException(500, str(exc))
+
+
+# ── deep history (Yahoo, 2005+) ───────────────────────────────────────────────
+
+@app.post("/refresh-deep-data")
+def refresh_deep_data(start: str = "2005-01-01") -> dict:
+    """
+    Download two decades of adjusted daily bars for the backtest ETFs from
+    Yahoo's chart API. Infrequent bulk pull (quarterly at most) — the daily
+    Alpaca pipeline is unaffected if Yahoo ever breaks. Run deep batches with
+    /run-all?dataset=deep — a separate dataset with separate fingerprints.
+    """
+    from strategy_lab.yahoo_data import download_deep_history_csv
+
+    output = _private_storage() / "data" / "market_data" / "yahoo_deep_etfs.csv"
+    end = datetime.now(timezone.utc).date().isoformat()
+    try:
+        rows = download_deep_history_csv(
+            symbols=_SYMBOLS, start=start, end=end, output_path=output,
+        )
+        return {"status": "ok", "rows_written": rows, "path": str(output), "start": start, "end": end}
+    except Exception as exc:
+        raise HTTPException(502, f"Deep history download failed: {exc}")
 
 
 # ── AI research suggestions ───────────────────────────────────────────────────
