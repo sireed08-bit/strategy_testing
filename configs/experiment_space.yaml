@@ -31,14 +31,13 @@ strategies:
       exit_rsi: [50, 53, 55, 58, 60, 65, 70]
       sma_filter: [50, 100, 200, 250, 300]
     # position_size_pct dropped (inert until simulate_long_only scales by it).
-    # max_hold_days and stop_loss_pct are both enforced. stop_loss_pct kept to a
-    # single probe value (8%) to bound the grid blow-up: a stop opposes mean
-    # reversion, so this tests whether capping drawdown helps net of lost rebounds.
-    # No 0 value — the existing (no stop_loss_pct key) combos ARE the no-stop
-    # baseline; adding 0 would just duplicate them under new fingerprints.
+    # max_hold_days, stop_loss_pct and vol_target_pct are all enforced. Single
+    # probe values bound the grid blow-up; no 0 values — combos WITHOUT a key
+    # are the baseline, adding 0 would duplicate them under new fingerprints.
     risk_grid:
       max_hold_days: [5, 10, 15]
       stop_loss_pct: [8]
+      vol_target_pct: [15]
 
   - family: breakout
     name: donchian_breakout
@@ -52,6 +51,7 @@ strategies:
     # stop_loss_pct now enforced — re-added. position_size_pct still omitted.
     risk_grid:
       stop_loss_pct: [8, 12]
+      vol_target_pct: [15]
     constraints:
       - exit_lookback_lt_entry_lookback
 
@@ -75,7 +75,10 @@ strategies:
       exit: price below moving average (risk off, hold cash)
     parameter_grid:
       trend_sma: [100, 150, 200]
-    # risk_grid omitted: position_size_pct is not yet enforced.
+    # vol_target_pct probe: regime switching + vol targeting is the classic
+    # low-drawdown pairing. position_size_pct still omitted (not enforced).
+    risk_grid:
+      vol_target_pct: [15]
 
   - family: momentum
     name: relative_strength_rotation
@@ -113,6 +116,7 @@ strategies:
     risk_grid:
       max_hold_days: [0, 10, 20]
       stop_loss_pct: [8]
+      vol_target_pct: [15]
 
   - family: momentum
     name: gap_momentum
@@ -125,3 +129,4 @@ strategies:
     risk_grid:
       max_hold_days: [2, 3, 5]
       stop_loss_pct: [5, 8]
+      vol_target_pct: [15]

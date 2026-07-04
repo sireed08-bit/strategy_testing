@@ -41,9 +41,12 @@ def run_backtest(
     lows = [bar.low for bar in ordered]
     opens = [bar.open for bar in ordered]
     stop_loss_pct = float(strategy.risk_model.get("stop_loss_pct", 0))
+    vol_target_pct = float(strategy.risk_model.get("vol_target_pct", 0))
     signals = build_signals_from_bars(strategy, ordered)
     equity_curve, daily_returns, trades = simulate_long_only(
-        closes, signals, cost_bps, stop_loss_pct=stop_loss_pct, lows=lows, opens=opens
+        closes, signals, cost_bps,
+        stop_loss_pct=stop_loss_pct, lows=lows, opens=opens,
+        vol_target_pct=vol_target_pct,
     )
     return assemble_metrics(equity_curve, daily_returns, trades, signals, closes)
 
@@ -142,6 +145,7 @@ def run_backtest_window(
         stop_loss_pct=stop_loss_pct,
         lows=lows[start_index:],
         opens=opens[start_index:],
+        vol_target_pct=float(strategy.risk_model.get("vol_target_pct", 0)),
     )
     return assemble_metrics(equity_curve, daily_returns, trades, window_signals, window_closes)
 
@@ -345,6 +349,7 @@ def simulate_long_only(
     stop_loss_pct: float = 0.0,
     lows: list[float | None] | None = None,
     opens: list[float | None] | None = None,
+    vol_target_pct: float = 0.0,
 ) -> tuple[list[float], list[float], list[float]]:
     """
     Long-only equity simulation with realistic execution.
@@ -368,6 +373,24 @@ def simulate_long_only(
         effective, stop_fills = _apply_stop_loss(
             effective, closes, stop_loss_pct / 100.0, lows, opens
         )
+
+    # Volatility targeting: scale exposure so realised risk approaches a fixed
+    # target. The sizing fraction for bar t uses ONLY market returns known by
+    # the close of t-1 (trailing window), so there is no look-ahead. Long-only:
+    # capped at 1.0 — we de-risk in storms, never lever up in calm.
+    size_fractions: list[float] | None = None
+    if vol_target_pct > 0:
+        daily_target = (vol_target_pct / 100.0) / sqrt(252)
+        market_returns = [0.0] + [
+            closes[i] / closes[i - 1] - 1.0 for i in range(1, len(closes))
+        ]
+        size_fractions = [1.0] * len(closes)
+        for index in range(1, len(closes)):
+            window = market_returns[max(1, index - 20):index]
+            if len(window) >= 10:
+                realized = pstdev(window)
+                if realized > 0:
+                    size_fractions[index] = min(1.0, daily_target / realized)
 
     equity = 1.0
     equity_curve = [equity]
@@ -393,9 +416,14 @@ def simulate_long_only(
 
         if was_in_position and not is_in_position and entry_price is not None:
             gross = exit_price / entry_price - 1.0
+            # Trade list stays unsized (per-unit signal quality); the equity
+            # curve below reflects the sized performance.
             trades.append((1.0 + gross) * (1.0 - cost) ** 2 - 1.0)  # round-trip net
             bar_return -= cost  # pay exit cost on the bar we exit
             entry_price = None
+
+        if size_fractions is not None:
+            bar_return *= size_fractions[index]
 
         equity *= 1.0 + bar_return
         daily_returns.append(bar_return)

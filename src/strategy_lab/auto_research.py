@@ -39,6 +39,7 @@ from strategy_lab.run_ledger import ResearchRunLedger, ResearchRunRecord
 PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "entry_rsi": (1, 99),
     "exit_rsi": (1, 99),
+    "vol_target_pct": (5, 40),
 }
 
 # At most this many seeds per strategy family within one symbol. Without a cap,

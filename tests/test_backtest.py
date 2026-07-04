@@ -152,6 +152,36 @@ def test_scoring_weights_sum_to_one_and_include_excess_return() -> None:
     assert "excess_return_pct" in criteria["metric_targets"]
 
 
+def test_vol_target_zero_is_an_exact_noop() -> None:
+    """Absent/zero vol_target must reproduce the unsized simulation bit-for-bit
+    — existing fingerprints and results stay valid without a rebuild."""
+    closes = [100.0, 104.0, 99.0, 106.0, 103.0, 108.0, 101.0, 110.0]
+    signals = [True] * len(closes)
+    plain = simulate_long_only(closes, signals, cost_bps=5.0)
+    zeroed = simulate_long_only(closes, signals, cost_bps=5.0, vol_target_pct=0.0)
+    assert plain == zeroed
+
+
+def test_vol_target_reduces_drawdown_on_a_volatile_series() -> None:
+    import math
+
+    # Calm first half, violent second half — vol targeting should de-risk into
+    # the storm and cut the drawdown versus the fully-invested run.
+    closes = []
+    price = 100.0
+    for day in range(120):
+        swing = 0.002 if day < 60 else 0.045  # calm, then violent
+        price = max(1.0, price * (1.0 + swing * math.sin(day * 1.3)))
+        closes.append(price)
+    signals = [True] * len(closes)
+    unsized, _, _ = simulate_long_only(closes, signals, cost_bps=0.0)
+    sized, _, _ = simulate_long_only(closes, signals, cost_bps=0.0, vol_target_pct=10.0)
+
+    from strategy_lab.backtest import max_drawdown_pct
+
+    assert max_drawdown_pct(sized) < max_drawdown_pct(unsized)
+
+
 def test_run_backtest_rejects_unimplemented_strategy() -> None:
     strategy = StrategySpec(
         family="test",
