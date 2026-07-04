@@ -182,6 +182,28 @@ def test_vol_target_reduces_drawdown_on_a_volatile_series() -> None:
     assert max_drawdown_pct(sized) < max_drawdown_pct(unsized)
 
 
+def test_yearly_breakdown_splits_strategy_and_benchmark_by_year() -> None:
+    from strategy_lab.backtest import yearly_breakdown
+
+    # Two calendar years of trending bars; an always-long strategy must roughly
+    # match the benchmark within each year (net of the tiny cost drag).
+    bars = _trending_bars(days=500)  # 2022-01-01 .. mid-2023
+    strategy = StrategySpec(
+        family="risk_on_risk_off",
+        name="spy_tlt_regime_switch",
+        hypothesis="",
+        rules={},
+        parameters={"trend_sma": 10},  # short SMA on a monotonic uptrend = ~always long
+        risk_model={},
+    )
+    rows = yearly_breakdown(strategy, bars, cost_bps=0.0)
+    assert [row["year"] for row in rows] == ["2022", "2023"]
+    for row in rows:
+        # Once long (after the 10-bar warmup + T+1), strategy tracks benchmark.
+        assert abs(row["excess_pct"]) < 8.0
+    assert all(row["benchmark_pct"] > 0 for row in rows)  # uptrend both years
+
+
 def test_run_backtest_rejects_unimplemented_strategy() -> None:
     strategy = StrategySpec(
         family="test",

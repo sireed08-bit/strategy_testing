@@ -326,6 +326,57 @@ def significance(limit: int = 8) -> dict:
     return {"results": results, "as_of": datetime.now(timezone.utc).isoformat()}
 
 
+# ── per-year regime breakdown ─────────────────────────────────────────────────
+
+@app.get("/regime-report")
+def regime_report(limit: int = 5, dataset: str = "default") -> dict:
+    """
+    Yearly strategy-vs-benchmark returns for the top robust strategies —
+    "did it earn everything in one lucky year?" Evaluated on the same pinned,
+    exam-trimmed window the records were scored on, so the held-out tail's
+    years stay unseen.
+    """
+    from strategy_lab.analysis import top_robust_records
+    from strategy_lab.backtest import yearly_breakdown
+    from strategy_lab.batch_runner import trim_final_exam
+    from strategy_lab.models import StrategySpec
+
+    records = ExperimentLog(_EXPERIMENT_LOG).records()
+    csv = _select_csv(dataset)
+    end_cap = _vintage_end(dataset)
+    dataset_name = csv.stem
+    scoped = [r for r in records if r["dataset"].get("name") == dataset_name] or records
+
+    bars_cache: dict = {}
+    results = []
+    for record in top_robust_records(scoped, limit=limit):
+        s = record["strategy"]
+        symbol = (record["dataset"]["symbols"] or ["?"])[0]
+        if symbol not in bars_cache:
+            bars, _ = load_price_bars_from_csv(csv, symbol, end_cap=end_cap)
+            bars_cache[symbol] = trim_final_exam(bars)
+        spec = StrategySpec(
+            family=s["family"],
+            name=s["name"],
+            hypothesis=s.get("hypothesis", ""),
+            rules=s.get("rules", {}),
+            parameters=s["parameters"],
+            risk_model=s.get("risk_model", {}),
+        )
+        years = yearly_breakdown(spec, bars_cache[symbol])
+        positive_excess_years = len([y for y in years if y["excess_pct"] > 0])
+        results.append({
+            "strategy": s["name"],
+            "symbol": symbol,
+            "score": record["score"],
+            "grade": record["grade"],
+            "parameters": s["parameters"],
+            "years": years,
+            "positive_excess_years": f"{positive_excess_years}/{len(years)}",
+        })
+    return {"dataset": dataset, "results": results, "as_of": datetime.now(timezone.utc).isoformat()}
+
+
 # ── final exam (true holdout, never touched by optimisation) ──────────────────
 
 @app.get("/final-exam")

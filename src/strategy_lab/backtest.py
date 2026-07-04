@@ -85,6 +85,60 @@ def assemble_metrics(
     }
 
 
+def yearly_breakdown(
+    strategy: StrategySpec,
+    bars: list[PriceBar],
+    cost_bps: float = COST_BPS,
+) -> list[dict]:
+    """
+    Strategy vs buy-and-hold return per calendar year.
+
+    Aggregate metrics hide regime dependence: a strategy that earned everything
+    in one rebound year and nothing since shows the same annualised return as
+    one that earned steadily. This is the first question to ask of any
+    multi-year result.
+    """
+    if len(bars) < 2:
+        return []
+    ordered = sorted(bars, key=lambda bar: bar.date)
+    closes = [bar.close for bar in ordered]
+    signals = build_signals_from_bars(strategy, ordered)
+    _, daily_returns, _ = simulate_long_only(
+        closes,
+        signals,
+        cost_bps,
+        stop_loss_pct=float(strategy.risk_model.get("stop_loss_pct", 0)),
+        lows=[bar.low for bar in ordered],
+        opens=[bar.open for bar in ordered],
+        vol_target_pct=float(strategy.risk_model.get("vol_target_pct", 0)),
+    )
+
+    # daily_returns[i-1] covers the move from bars[i-1] to bars[i]; attribute it
+    # to the year of the bar it lands on.
+    by_year: dict[str, dict] = {}
+    for index in range(1, len(ordered)):
+        year = ordered[index].date[:4]
+        slot = by_year.setdefault(
+            year, {"strategy_growth": 1.0, "benchmark_growth": 1.0}
+        )
+        slot["strategy_growth"] *= 1.0 + daily_returns[index - 1]
+        slot["benchmark_growth"] *= closes[index] / closes[index - 1]
+
+    rows = []
+    for year in sorted(by_year):
+        strat = (by_year[year]["strategy_growth"] - 1.0) * 100.0
+        bench = (by_year[year]["benchmark_growth"] - 1.0) * 100.0
+        rows.append(
+            {
+                "year": year,
+                "strategy_pct": round(strat, 2),
+                "benchmark_pct": round(bench, 2),
+                "excess_pct": round(strat - bench, 2),
+            }
+        )
+    return rows
+
+
 def backtest_trades(
     strategy: StrategySpec,
     bars: list[PriceBar],
