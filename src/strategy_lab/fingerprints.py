@@ -20,7 +20,10 @@ from strategy_lab.models import DatasetSpec, StrategySpec
 #   v5: realistic stop-loss fills (stop price, or the open on a gap-through —
 #       never the recovered close), warm-indicator out-of-sample evaluation, and
 #       a final-exam holdout tail excluded from all optimisation.
-ENGINE_VERSION = 5
+#   v6: benchmark-relative metrics — benchmark_return_pct and excess_return_pct
+#       (strategy minus buy-and-hold on the same bars) join the metric set and
+#       carry scoring weight. A strategy that loses to holding is not a finding.
+ENGINE_VERSION = 6
 
 
 def canonical_json(payload: dict[str, Any]) -> str:

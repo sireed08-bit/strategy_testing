@@ -8,12 +8,16 @@ hard_rejects:
   max_drawdown_pct_above: 35
   trade_count_below: 20
   profit_factor_below: 0.95
+# excess_return_pct (strategy minus buy-and-hold on the same bars) carries the
+# largest single weight alongside drawdown: a strategy that loses to simply
+# holding the symbol is not a finding, whatever its absolute return.
 weights:
-  annualized_return_pct: 0.20
+  annualized_return_pct: 0.10
+  excess_return_pct: 0.15
   max_drawdown_pct: 0.20
   sharpe_ratio: 0.15
-  sortino_ratio: 0.10
-  profit_factor: 0.15
+  sortino_ratio: 0.08
+  profit_factor: 0.12
   trade_count: 0.05
   win_rate_pct: 0.05
   exposure_pct: 0.05
@@ -23,6 +27,11 @@ metric_targets:
   annualized_return_pct:
     poor: 0
     excellent: 20
+  excess_return_pct:
+    # 0 = matches buy-and-hold; +6/yr net of costs is a genuinely strong edge
+    # on liquid index ETFs. Negative = the strategy destroys value vs holding.
+    poor: -6
+    excellent: 6
   max_drawdown_pct:
     excellent: 8
     poor: 35

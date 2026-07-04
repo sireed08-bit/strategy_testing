@@ -6,6 +6,8 @@ from strategy_lab.strategy_ideas import seed_strategy_specs
 
 EXPECTED_METRIC_KEYS = {
     "annualized_return_pct",
+    "benchmark_return_pct",
+    "excess_return_pct",
     "max_drawdown_pct",
     "sharpe_ratio",
     "sortino_ratio",
@@ -120,6 +122,34 @@ def test_stop_loss_fills_at_open_when_bar_gaps_through_stop() -> None:
     )
     assert len(trades) == 1
     assert abs(trades[0] - (-0.20)) < 1e-9  # filled at the 80 open, not the 90 stop
+
+
+def test_excess_return_is_negative_for_a_flat_strategy_in_a_bull_market() -> None:
+    """A strategy that never trades on a rising symbol must show excess return
+    of exactly minus the benchmark: doing nothing has an opportunity cost."""
+    bars = _trending_bars(days=300)
+    strategy = StrategySpec(
+        family="mean_reversion",
+        name="rsi_pullback",
+        hypothesis="",
+        rules={},
+        # entry_rsi=1 on a monotonic uptrend: RSI stays pinned high, never enters.
+        parameters={"rsi_period": 14, "entry_rsi": 1, "exit_rsi": 99, "sma_filter": 0},
+        risk_model={},
+    )
+    metrics = run_backtest(strategy, bars)
+    assert metrics["trade_count"] == 0.0
+    assert metrics["benchmark_return_pct"] > 0
+    assert metrics["excess_return_pct"] == round(0.0 - metrics["benchmark_return_pct"], 2)
+
+
+def test_scoring_weights_sum_to_one_and_include_excess_return() -> None:
+    from strategy_lab.scoring import load_criteria
+
+    criteria = load_criteria()
+    assert "excess_return_pct" in criteria["weights"]
+    assert abs(sum(criteria["weights"].values()) - 1.0) < 1e-9
+    assert "excess_return_pct" in criteria["metric_targets"]
 
 
 def test_run_backtest_rejects_unimplemented_strategy() -> None:

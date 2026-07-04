@@ -45,9 +45,31 @@ def run_backtest(
     equity_curve, daily_returns, trades = simulate_long_only(
         closes, signals, cost_bps, stop_loss_pct=stop_loss_pct, lows=lows, opens=opens
     )
+    return assemble_metrics(equity_curve, daily_returns, trades, signals, closes)
 
+
+def assemble_metrics(
+    equity_curve: list[float],
+    daily_returns: list[float],
+    trades: list[float],
+    signals: list[bool],
+    closes: list[float],
+) -> dict[str, float]:
+    """
+    Metric set shared by full-history and windowed backtests.
+
+    Includes the benchmark comparison: a strategy is only worth anything if it
+    beats (or risk-adjusts better than) simply holding the same symbol over the
+    same bars. The close series IS the buy-and-hold equity curve, so the same
+    annualisation applies to both. excess_return_pct is the strategy's edge over
+    doing nothing — the number this whole system exists to maximise.
+    """
+    strategy_return = annualized_return_pct(equity_curve)
+    benchmark_return = annualized_return_pct(closes)
     return {
-        "annualized_return_pct": annualized_return_pct(equity_curve),
+        "annualized_return_pct": strategy_return,
+        "benchmark_return_pct": benchmark_return,
+        "excess_return_pct": round(strategy_return - benchmark_return, 2),
         "max_drawdown_pct": max_drawdown_pct(equity_curve),
         "sharpe_ratio": sharpe_ratio(daily_returns),
         "sortino_ratio": sortino_ratio(daily_returns),
@@ -90,26 +112,16 @@ def run_backtest_window(
     stop_loss_pct = float(strategy.risk_model.get("stop_loss_pct", 0))
 
     window_signals = signals[start_index:]
+    window_closes = closes[start_index:]
     equity_curve, daily_returns, trades = simulate_long_only(
-        closes[start_index:],
+        window_closes,
         window_signals,
         cost_bps,
         stop_loss_pct=stop_loss_pct,
         lows=lows[start_index:],
         opens=opens[start_index:],
     )
-    return {
-        "annualized_return_pct": annualized_return_pct(equity_curve),
-        "max_drawdown_pct": max_drawdown_pct(equity_curve),
-        "sharpe_ratio": sharpe_ratio(daily_returns),
-        "sortino_ratio": sortino_ratio(daily_returns),
-        "profit_factor": profit_factor(trades),
-        "trade_count": float(len(trades)),
-        "win_rate_pct": win_rate_pct(trades),
-        "exposure_pct": exposure_pct(window_signals),
-        "regime_consistency": chunk_consistency(daily_returns),
-        "robustness_score": chunk_consistency(daily_returns),
-    }
+    return assemble_metrics(equity_curve, daily_returns, trades, window_signals, window_closes)
 
 
 # Strategy families that need OHLCV beyond close (gap, true range, volume).
