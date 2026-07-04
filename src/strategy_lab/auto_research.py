@@ -15,6 +15,7 @@ Guardrails that keep it safe (not a data-snooping machine):
 """
 from __future__ import annotations
 
+import random
 from collections import Counter
 from pathlib import Path
 
@@ -183,6 +184,75 @@ def propose_refinements(
     return proposals
 
 
+# Fraction of each round's budget spent on random exploration rather than
+# refining winners. Pure exploitation tunnel-visions on the current basins;
+# once they are mined out the loop would only ever re-polish the same corner.
+EXPLORE_FRACTION = 0.25
+
+
+def propose_explorations(
+    dataset,
+    existing_fingerprints: set[str],
+    count: int,
+    rng: random.Random,
+    experiment_space: dict | None = None,
+) -> list[StrategySpec]:
+    """
+    Random off-grid specs sampled uniformly within each family's grid ranges.
+
+    The base grids are exhausted, so exploration samples BETWEEN and AROUND the
+    grid points: each tunable draws uniformly from [min, max] of its configured
+    grid values (ints stay ints). Family constraints and PARAM_BOUNDS apply.
+    """
+    from strategy_lab.experiment_generator import load_experiment_space, passes_constraints
+
+    space = experiment_space or load_experiment_space()
+    items = space.get("strategies", [])
+    if not items:
+        return []
+
+    def _sample(grid: dict) -> dict:
+        sampled = {}
+        for key, values in grid.items():
+            numeric = [v for v in values if isinstance(v, (int, float))]
+            if not numeric:
+                sampled[key] = rng.choice(values)
+                continue
+            low, high = min(numeric), max(numeric)
+            if all(isinstance(v, int) for v in numeric):
+                value = rng.randint(int(low), int(high))
+            else:
+                value = round(rng.uniform(low, high), 2)
+            bounds = PARAM_BOUNDS.get(key)
+            if bounds:
+                value = max(bounds[0], min(bounds[1], value))
+            sampled[key] = value
+        return sampled
+
+    proposals: list[StrategySpec] = []
+    attempts = 0
+    while len(proposals) < count and attempts < count * 25:
+        attempts += 1
+        item = rng.choice(items)
+        parameters = _sample(item.get("parameter_grid", {}))
+        if not passes_constraints(parameters, item.get("constraints", [])):
+            continue
+        spec = StrategySpec(
+            family=item["family"],
+            name=item["name"],
+            hypothesis=item.get("hypothesis", ""),
+            rules=item.get("rules", {}),
+            parameters=parameters,
+            risk_model=_sample(item.get("risk_grid", {})),
+        )
+        fingerprint = experiment_fingerprint(spec, dataset)
+        if fingerprint in existing_fingerprints:
+            continue
+        existing_fingerprints.add(fingerprint)
+        proposals.append(spec)
+    return proposals
+
+
 def run_auto_research(
     *,
     experiment_log_path: Path,
@@ -202,16 +272,29 @@ def run_auto_research(
     total_created = 0
     best_before = max((r["score"] for r in records), default=0.0)
 
+    # Deterministic per-state seed: same log state → same exploration draw, so
+    # an interrupted round can be re-run without sampling a different universe.
+    rng = random.Random(len(known))
+
     for symbol in symbols:
         bars, dataset = load_price_bars_from_csv(data_csv, symbol)
-        proposals = propose_refinements(
-            records, dataset, known, top_k=top_k, max_new=max_new_per_symbol
+        explore_budget = max(1, int(max_new_per_symbol * EXPLORE_FRACTION))
+        refinements = propose_refinements(
+            records, dataset, known, top_k=top_k, max_new=max_new_per_symbol - explore_budget
         )
+        explorations = propose_explorations(dataset, known, explore_budget, rng)
+        proposals = refinements + explorations
         created, _, errored, _ = evaluate_and_log_strategies(
             proposals, bars, dataset, experiment_log
         )
         total_created += created
-        per_symbol[symbol] = {"proposed": len(proposals), "created": created, "errored": errored}
+        per_symbol[symbol] = {
+            "proposed": len(proposals),
+            "refinements": len(refinements),
+            "explorations": len(explorations),
+            "created": created,
+            "errored": errored,
+        }
 
     all_records = experiment_log.records()
     write_markdown_report(all_records, report_path)

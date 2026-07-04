@@ -160,6 +160,45 @@ def test_seed_pool_caps_one_family_from_flooding() -> None:
     assert "gap_momentum" in by_name  # the minority family still gets explored
 
 
+def test_propose_explorations_samples_within_grid_ranges() -> None:
+    import random
+
+    from strategy_lab.auto_research import propose_explorations
+
+    dataset = DatasetSpec(name="t", symbols=["QQQ"], timeframe="1D", start="2021-01-01", end="2021-12-31")
+    space = {
+        "strategies": [
+            {
+                "family": "mean_reversion",
+                "name": "rsi_pullback",
+                "hypothesis": "",
+                "rules": {},
+                "parameter_grid": {
+                    "rsi_period": [7, 14, 28],
+                    "entry_rsi": [20, 45],
+                    "exit_rsi": [50, 70],
+                    "sma_filter": [50, 300],
+                },
+                "risk_grid": {"max_hold_days": [5, 15]},
+            }
+        ]
+    }
+    rng = random.Random(42)
+    seen: set[str] = set()
+    proposals = propose_explorations(dataset, seen, count=10, rng=rng, experiment_space=space)
+    assert len(proposals) == 10
+    for p in proposals:
+        assert 7 <= p.parameters["rsi_period"] <= 28
+        assert 20 <= p.parameters["entry_rsi"] <= 45
+        assert 50 <= p.parameters["exit_rsi"] <= 70
+        assert 5 <= p.risk_model["max_hold_days"] <= 15
+    # Deterministic: the same seed reproduces the same draw.
+    proposals_again = propose_explorations(
+        dataset, set(), count=10, rng=random.Random(42), experiment_space=space
+    )
+    assert [p.parameters for p in proposals] == [p.parameters for p in proposals_again]
+
+
 def test_cross_symbol_support_counts_sibling_symbols() -> None:
     from strategy_lab.analysis import cross_symbol_support
 
