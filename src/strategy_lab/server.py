@@ -52,6 +52,7 @@ _RUN_LOG = _ROOT / "data" / "runs" / "research_runs.jsonl"
 _REPORT = _ROOT / "reports" / "latest.md"
 _SYMBOLS = ["SPY", "QQQ", "IWM", "DIA"]
 _SCANNER_CSV_NAME = "scanner_universe_bars.csv"
+_SIGNAL_JOURNAL = _ROOT / "data" / "signals" / "signal_journal.jsonl"
 
 
 def _env(key: str, default: str = "") -> str:
@@ -384,6 +385,11 @@ def signals(limit: int = 10) -> dict:
             "score": record["score"],
             "grade": record["grade"],
             "parameters": s["parameters"],
+            "strategy_identity": {
+                "name": s["name"],
+                "parameters": s["parameters"],
+                "risk_model": s.get("risk_model", {}),
+            },
             "signal": state,
             "currently_long": currently_long,
             "last_bar_date": last_date,
@@ -404,13 +410,49 @@ def signals(limit: int = 10) -> dict:
             priority="high",
         )
     errored = [r for r in results if r["signal"] == "error"]
+
+    # Journal today's signals — the forward walk-forward record. Best-effort:
+    # a journaling failure must never block signal delivery to n8n.
+    journaled = 0
+    journal_error = None
+    try:
+        from strategy_lab.signal_journal import append_signals
+        journaled = append_signals(_SIGNAL_JOURNAL, results)
+    except Exception as exc:
+        journal_error = f"{type(exc).__name__}: {exc}"
+
     return {
         "signals": results,
         "active_signals": active,
         "error_count": len(errored),
+        "journaled": journaled,
+        "journal_error": journal_error,
         "as_of": datetime.now(timezone.utc).isoformat(),
         "last_bar_date": results[0]["last_bar_date"] if results else None,
     }
+
+
+# ── forward journal (walk-forward record of past signals) ────────────────────
+
+@app.get("/journal")
+def journal() -> dict:
+    """
+    Forward performance of every signal the lab has journalled: hypothetical
+    T+1 fills with costs, per strategy stream, against buy-and-hold of the same
+    symbol over the same span. This record was written before the future
+    happened — the one kind of evidence no backtest can fake.
+    """
+    from strategy_lab.signal_journal import evaluate_journal
+
+    csv = _data_csv()
+
+    def _load(symbol: str):
+        bars, _ = load_price_bars_from_csv(csv, symbol)
+        return bars
+
+    report = evaluate_journal(_SIGNAL_JOURNAL, _load)
+    report["as_of"] = datetime.now(timezone.utc).isoformat()
+    return report
 
 
 # ── run single symbol ─────────────────────────────────────────────────────────
@@ -802,6 +844,7 @@ def sync_private() -> dict:
     file_pairs = [
         (_EXPERIMENT_LOG, private / "data" / "experiments" / "experiment_log.jsonl"),
         (_RUN_LOG, private / "data" / "runs" / "research_runs.jsonl"),
+        (_SIGNAL_JOURNAL, private / "data" / "signals" / "signal_journal.jsonl"),
         (_REPORT, private / "reports" / "latest.md"),
     ]
     for src, dst in file_pairs:

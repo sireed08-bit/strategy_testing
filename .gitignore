@@ -27,6 +27,7 @@ data/private/
 data/market_data/
 data/experiments/*
 data/runs/*
+data/signals/
 reports/*.md
 artifacts/
 private_storage/
