@@ -198,10 +198,13 @@ def test_yearly_breakdown_splits_strategy_and_benchmark_by_year() -> None:
     )
     rows = yearly_breakdown(strategy, bars, cost_bps=0.0)
     assert [row["year"] for row in rows] == ["2022", "2023"]
-    for row in rows:
-        # Once long (after the 10-bar warmup + T+1), strategy tracks benchmark.
-        assert abs(row["excess_pct"]) < 8.0
     assert all(row["benchmark_pct"] > 0 for row in rows)  # uptrend both years
+    # 2022 carries the warmup drag: the strategy sits out the first ~11 bars of
+    # a compounding rally, so its excess is negative — and attributed to the
+    # RIGHT year, which is exactly what this breakdown exists to show.
+    assert -20.0 < rows[0]["excess_pct"] < 0.0
+    # 2023 has no warmup: fully long all year, excess ~0 at zero cost.
+    assert abs(rows[1]["excess_pct"]) < 1.0
 
 
 def test_run_backtest_rejects_unimplemented_strategy() -> None:
