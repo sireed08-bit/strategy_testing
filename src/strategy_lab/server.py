@@ -141,6 +141,16 @@ def _select_csv(dataset: str) -> Path:
     raise HTTPException(400, f"Unknown dataset '{dataset}'. Use 'default' or 'deep'.")
 
 
+_VINTAGE_FILE = _ROOT / "data" / "experiments" / "dataset_vintage.json"
+
+
+def _vintage_end(dataset: str) -> str:
+    """Pinned research end-date for a dataset (auto-initialised on first use)."""
+    from strategy_lab.data_loader import dataset_vintage_end
+
+    return dataset_vintage_end(_VINTAGE_FILE, dataset or "default", _select_csv(dataset))
+
+
 def _private_state_repo() -> Path:
     override = _env("STRATEGY_PRIVATE_STATE_REPO")
     return Path(override) if override else _ROOT.parent / "strategy_testing_private_state"
@@ -286,13 +296,14 @@ def significance(limit: int = 8) -> dict:
 
     records = ExperimentLog(_EXPERIMENT_LOG).records()
     csv = _data_csv()
+    end_cap = _vintage_end("default")  # same pinned window the records were scored on
     bars_cache: dict = {}
     results = []
     for record in top_robust_records(records, limit=limit):
         s = record["strategy"]
         symbol = (record["dataset"]["symbols"] or ["?"])[0]
         if symbol not in bars_cache:
-            bars, _ = load_price_bars_from_csv(csv, symbol)
+            bars, _ = load_price_bars_from_csv(csv, symbol, end_cap=end_cap)
             bars_cache[symbol] = trim_final_exam(bars)
         spec = StrategySpec(
             family=s["family"],
@@ -335,6 +346,7 @@ def final_exam(limit: int = 5) -> dict:
 
     records = ExperimentLog(_EXPERIMENT_LOG).records()
     csv = _data_csv()
+    end_cap = _vintage_end("default")  # same pinned window the records were scored on
     results = []
     for symbol in _SYMBOLS:
         scoped = [r for r in records if (r["dataset"].get("symbols") or ["?"])[0] == symbol]
@@ -348,7 +360,7 @@ def final_exam(limit: int = 5) -> dict:
                 parameters=s["parameters"],
                 risk_model=s.get("risk_model", {}),
             )
-            bars, _ = load_price_bars_from_csv(csv, symbol)
+            bars, _ = load_price_bars_from_csv(csv, symbol, end_cap=end_cap)
             bars = sorted(bars, key=lambda bar: bar.date)
             exam_start = final_exam_start_index(len(bars))
             try:
@@ -544,6 +556,7 @@ def run_batch(req: BatchRequest) -> dict:
                 limit=req.limit,
                 data_csv=_select_csv(req.dataset),
                 symbol=req.symbol,
+                end_cap=_vintage_end(req.dataset),
             )
         return result.to_dict()
     except HTTPException:
@@ -562,6 +575,7 @@ def run_all(limit: int = 400, dataset: str = "default") -> dict:
 
 def _run_all_locked(limit: int, dataset: str = "default") -> dict:
     csv = _select_csv(dataset)
+    end_cap = _vintage_end(dataset)
     date_str = datetime.now(timezone.utc).date().isoformat()
     results = []
     for symbol in _SYMBOLS:
@@ -575,6 +589,7 @@ def _run_all_locked(limit: int, dataset: str = "default") -> dict:
                 limit=limit,
                 data_csv=csv,
                 symbol=symbol,
+                end_cap=end_cap,
             )
             results.append({
                 "symbol": symbol,
@@ -647,6 +662,7 @@ def auto_research(top_k: int = 6, max_new_per_symbol: int = 60) -> dict:
             symbols=_SYMBOLS,
             top_k=top_k,
             max_new_per_symbol=max_new_per_symbol,
+            end_cap=_vintage_end("default"),
         )
     headline = (
         f"+{result['experiments_created']} refined experiments. "
@@ -693,6 +709,31 @@ def refresh_data(start: str = "2020-01-01", force: bool = False) -> dict:
         return {"status": "ok", "rows_written": rows, "path": str(output), "end_date": end}
     except Exception as exc:
         raise HTTPException(500, str(exc))
+
+
+# ── dataset vintage control ───────────────────────────────────────────────────
+
+@app.post("/advance-vintage")
+def advance_vintage(dataset: str = "default") -> dict:
+    """
+    Deliberately move a dataset's pinned research end-date to the CSV's current
+    last bar. EVERY fingerprint for that dataset rotates — the grid re-runs
+    under the new vintage on subsequent batches. Do this occasionally and on
+    purpose (e.g. quarterly), never as a side effect of a data refresh.
+    """
+    from strategy_lab.data_loader import advance_dataset_vintage
+
+    result = advance_dataset_vintage(_VINTAGE_FILE, dataset or "default", _select_csv(dataset))
+    _notify(
+        title="Strategy Lab — dataset vintage advanced",
+        message=(
+            f"{result['dataset']}: {result['previous']} → {result['current']}. "
+            "All fingerprints for this dataset rotate; the grid will re-run on "
+            "coming batches."
+        ),
+        priority="default",
+    )
+    return result
 
 
 # ── deep history (Yahoo, 2005+) ───────────────────────────────────────────────

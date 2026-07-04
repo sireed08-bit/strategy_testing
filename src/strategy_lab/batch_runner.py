@@ -26,9 +26,10 @@ def run_backtest_batch(
     synthetic_days: int = 756,
     shard_index: int = 0,
     shard_count: int = 1,
+    end_cap: str | None = None,
 ) -> ResearchRunRecord:
     bars, dataset = (
-        load_price_bars_from_csv(data_csv, symbol)
+        load_price_bars_from_csv(data_csv, symbol, end_cap=end_cap)
         if data_csv
         else synthetic_price_bars(symbol=symbol, days=synthetic_days)
     )

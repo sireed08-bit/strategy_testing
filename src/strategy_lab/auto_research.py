@@ -263,6 +263,7 @@ def run_auto_research(
     symbols: list[str],
     top_k: int = 6,
     max_new_per_symbol: int = 60,
+    end_cap: str | None = None,
 ) -> dict:
     """One refinement round across all symbols. Returns a summary dict."""
     experiment_log = ExperimentLog(experiment_log_path)
@@ -278,7 +279,7 @@ def run_auto_research(
     rng = random.Random(len(known))
 
     for symbol in symbols:
-        bars, dataset = load_price_bars_from_csv(data_csv, symbol)
+        bars, dataset = load_price_bars_from_csv(data_csv, symbol, end_cap=end_cap)
         explore_budget = max(1, int(max_new_per_symbol * EXPLORE_FRACTION))
         refinements = propose_refinements(
             records, dataset, known, top_k=top_k, max_new=max_new_per_symbol - explore_budget

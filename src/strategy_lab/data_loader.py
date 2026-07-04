@@ -1,11 +1,67 @@
 from __future__ import annotations
 
 import csv
+import json
 from datetime import date, timedelta
 from pathlib import Path
 
 from strategy_lab.backtest import PriceBar
 from strategy_lab.models import DatasetSpec
+
+
+# ── dataset vintages ──────────────────────────────────────────────────────────
+# DatasetSpec.end is derived from the last bar, and it is part of every
+# experiment fingerprint. Without pinning, any successful data refresh moves
+# the end date and silently rotates EVERY fingerprint — the whole grid then
+# re-runs as "fresh" and the log fills with mixed data vintages. The vintage
+# file pins each dataset's research end-date: batches slice to it, refreshes
+# extend the CSV freely underneath (live signals want fresh bars), and the pin
+# only moves when advance_dataset_vintage is called deliberately.
+
+def _csv_max_date(csv_path: Path | str) -> str:
+    last = ""
+    with Path(csv_path).open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if row["date"] > last:
+                last = row["date"]
+    if not last:
+        raise ValueError(f"No rows in {csv_path}")
+    return last
+
+
+def dataset_vintage_end(vintage_path: Path | str, dataset_name: str, csv_path: Path | str) -> str:
+    """
+    The pinned research end-date for a dataset. Auto-initialises to the CSV's
+    current max date on first use — so pinning never orphans results that were
+    computed just before it was introduced.
+    """
+    path = Path(vintage_path)
+    vintages: dict[str, str] = {}
+    if path.exists():
+        vintages = json.loads(path.read_text(encoding="utf-8"))
+    if dataset_name not in vintages:
+        vintages[dataset_name] = _csv_max_date(csv_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(vintages, sort_keys=True, indent=2), encoding="utf-8")
+    return vintages[dataset_name]
+
+
+def advance_dataset_vintage(vintage_path: Path | str, dataset_name: str, csv_path: Path | str) -> dict:
+    """
+    Deliberately move a dataset's pin to the CSV's current max date. Every
+    fingerprint for that dataset rotates — the grid re-runs under the new
+    vintage. This is a conscious, occasional decision (e.g. quarterly), not a
+    side effect of a data refresh.
+    """
+    path = Path(vintage_path)
+    vintages: dict[str, str] = {}
+    if path.exists():
+        vintages = json.loads(path.read_text(encoding="utf-8"))
+    previous = vintages.get(dataset_name)
+    vintages[dataset_name] = _csv_max_date(csv_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(vintages, sort_keys=True, indent=2), encoding="utf-8")
+    return {"dataset": dataset_name, "previous": previous, "current": vintages[dataset_name]}
 
 
 def _opt_float(value: str | None) -> float | None:
@@ -18,7 +74,18 @@ def _opt_float(value: str | None) -> float | None:
         return None
 
 
-def load_price_bars_from_csv(path: Path | str, symbol: str) -> tuple[list[PriceBar], DatasetSpec]:
+def load_price_bars_from_csv(
+    path: Path | str,
+    symbol: str,
+    end_cap: str | None = None,
+) -> tuple[list[PriceBar], DatasetSpec]:
+    """
+    Load bars for one symbol; when end_cap (ISO date) is given, only bars up to
+    and including that date are returned and the DatasetSpec reflects the
+    capped range. Research batches pass the pinned vintage date here so a data
+    refresh cannot silently rotate every experiment fingerprint; live-signal
+    paths pass None and always see the freshest bars.
+    """
     source = Path(path)
     bars: list[PriceBar] = []
     with source.open("r", encoding="utf-8", newline="") as handle:
@@ -31,6 +98,8 @@ def load_price_bars_from_csv(path: Path | str, symbol: str) -> tuple[list[PriceB
         # Optional OHLCV columns are read when present and left as None otherwise.
         for row in reader:
             if row["symbol"] != symbol:
+                continue
+            if end_cap is not None and row["date"] > end_cap:
                 continue
             bars.append(
                 PriceBar(
