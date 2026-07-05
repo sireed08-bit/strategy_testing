@@ -87,6 +87,45 @@
     },
     {
       "parameters": {
+        "url": "http://host.docker.internal:8078/run-all",
+        "method": "POST",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "limit", "value": "400"},
+            {"name": "dataset", "value": "deep"}
+          ]
+        },
+        "options": {"timeout": 5400000}
+      },
+      "id": "11111111-0000-0000-0000-000000000010",
+      "name": "Run Deep History Fill",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 340],
+      "notes": "Creeping grid-fill against the 2005+ dataset — new families and grid changes flow onto multi-regime history automatically."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/run-scanner-batch",
+        "method": "POST",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "limit", "value": "200"}
+          ]
+        },
+        "options": {"timeout": 5400000}
+      },
+      "id": "11111111-0000-0000-0000-000000000011",
+      "name": "Scanner Universe Fill",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 460],
+      "notes": "Creeping fill of the strategy grid across 12 liquid single names — the hunting ground the index ETFs are not."
+    },
+    {
+      "parameters": {
         "url": "http://host.docker.internal:8078/suggest",
         "method": "POST",
         "options": {
@@ -204,6 +243,16 @@
       ]
     },
     "Run All Symbols": {
+      "main": [
+        [{"node": "Run Deep History Fill", "type": "main", "index": 0}]
+      ]
+    },
+    "Run Deep History Fill": {
+      "main": [
+        [{"node": "Scanner Universe Fill", "type": "main", "index": 0}]
+      ]
+    },
+    "Scanner Universe Fill": {
       "main": [
         [{"node": "Get AI Suggestions", "type": "main", "index": 0}]
       ]

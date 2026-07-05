@@ -869,11 +869,12 @@ def prune() -> dict:
 # ── autonomous research loop ──────────────────────────────────────────────────
 
 @app.post("/auto-research")
-def auto_research(top_k: int = 6, max_new_per_symbol: int = 60) -> dict:
+def auto_research(top_k: int = 6, max_new_per_symbol: int = 60, dataset: str = "default") -> dict:
     """
     One bounded hill-climbing round: refine parameters around the current top
     out-of-sample-robust results, backtest the neighbours, keep what survives.
     Safe to schedule — it only adds OOS-gated experiments, never edits code/grids.
+    dataset=deep refines against the 2005+ multi-regime history.
     """
     from strategy_lab.auto_research import run_auto_research
 
@@ -882,11 +883,11 @@ def auto_research(top_k: int = 6, max_new_per_symbol: int = 60) -> dict:
             experiment_log_path=_EXPERIMENT_LOG,
             run_log_path=_RUN_LOG,
             report_path=_REPORT,
-            data_csv=_data_csv(),
+            data_csv=_select_csv(dataset),
             symbols=_SYMBOLS,
             top_k=top_k,
             max_new_per_symbol=max_new_per_symbol,
-            end_cap=_vintage_end("default"),
+            end_cap=_vintage_end(dataset),
         )
     headline = (
         f"+{result['experiments_created']} refined experiments. "
@@ -1321,8 +1322,17 @@ def sync_private() -> dict:
             "Set STRATEGY_PRIVATE_STATE_REPO env var if cloned elsewhere.",
         )
 
+    # The fingerprint index, vintage pins and archived-count meta are part of
+    # the backup set: losing the index silently re-runs the entire grid, and
+    # losing the vintage file re-triggers fingerprint churn. Since the hot data
+    # moved OFF OneDrive (sync-race corruption), this sync is its only backup.
+    _idx = _EXPERIMENT_LOG.parent / (_EXPERIMENT_LOG.stem + ".fingerprints.idx")
+    _meta = _EXPERIMENT_LOG.parent / (_EXPERIMENT_LOG.stem + ".meta.json")
     file_pairs = [
         (_EXPERIMENT_LOG, private / "data" / "experiments" / "experiment_log.jsonl"),
+        (_idx, private / "data" / "experiments" / "experiment_log.fingerprints.idx"),
+        (_meta, private / "data" / "experiments" / "experiment_log.meta.json"),
+        (_VINTAGE_FILE, private / "data" / "experiments" / "dataset_vintage.json"),
         (_RUN_LOG, private / "data" / "runs" / "research_runs.jsonl"),
         (_SIGNAL_JOURNAL, private / "data" / "signals" / "signal_journal.jsonl"),
         (_REPORT, private / "reports" / "latest.md"),
@@ -1334,10 +1344,10 @@ def sync_private() -> dict:
 
     try:
         subprocess.run(
-            ["git", "-C", str(private), "add",
-             "data/experiments/experiment_log.jsonl",
-             "data/runs/research_runs.jsonl",
-             "reports/latest.md"],
+            # Stage everything synced under data/ and reports/ — the old
+            # explicit path list silently omitted newer files (the signal
+            # journal was copied but never committed).
+            ["git", "-C", str(private), "add", "data", "reports"],
             check=True, capture_output=True,
         )
         no_change = subprocess.run(

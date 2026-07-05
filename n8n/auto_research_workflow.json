@@ -55,6 +55,40 @@
     },
     {
       "parameters": {
+        "url": "http://host.docker.internal:8078/auto-research",
+        "method": "POST",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {"name": "top_k", "value": "6"},
+            {"name": "max_new_per_symbol", "value": "60"},
+            {"name": "dataset", "value": "deep"}
+          ]
+        },
+        "options": {"timeout": 3000000}
+      },
+      "id": "44444444-0000-0000-0000-000000000006",
+      "name": "Deep Auto-Research (2005+)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 300],
+      "notes": "Refines against 21 years of multi-regime history — the evidence that matters most. Slower per backtest (4x the bars); generous timeout."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/run-portfolio",
+        "method": "POST",
+        "options": {"timeout": 1200000}
+      },
+      "id": "44444444-0000-0000-0000-000000000007",
+      "name": "Portfolio Switch Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1120, 300],
+      "notes": "Evaluates the multi-symbol switch/rotation grid (regime pairs, momentum rotation, bond-low risk-off). Small grid; skips known fingerprints."
+    },
+    {
+      "parameters": {
         "url": "http://host.docker.internal:8078/prune",
         "method": "POST",
         "options": {"timeout": 300000}
@@ -63,8 +97,20 @@
       "name": "Prune Reject Records",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [900, 300],
+      "position": [1340, 300],
       "notes": "Archive reject-grade records to private storage so the hot log stays small (~90% of records are rejects). Fingerprint index is preserved, so pruned combos are never re-run."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/champions",
+        "options": {"timeout": 600000}
+      },
+      "id": "44444444-0000-0000-0000-000000000008",
+      "name": "Champions Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1560, 300],
+      "notes": "Weekly audit against the ungameable bar: promising score + positive excess + final-exam gap <= 10 with >= 10 exam trades. Server pushes ntfy when a validated champion exists."
     },
     {
       "parameters": {
@@ -76,8 +122,8 @@
       "name": "Sync Private State",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [1120, 300],
-      "notes": "Commit + push the refined (and now small) experiment log to the private state repo."
+      "position": [1780, 300],
+      "notes": "Commit + push the refined (and now small) experiment log to the private state repo — the ONLY backup of the local hot data."
     }
   ],
   "connections": {
@@ -88,9 +134,18 @@
       "main": [[{"node": "Auto-Research Round", "type": "main", "index": 0}]]
     },
     "Auto-Research Round": {
+      "main": [[{"node": "Deep Auto-Research (2005+)", "type": "main", "index": 0}]]
+    },
+    "Deep Auto-Research (2005+)": {
+      "main": [[{"node": "Portfolio Switch Batch", "type": "main", "index": 0}]]
+    },
+    "Portfolio Switch Batch": {
       "main": [[{"node": "Prune Reject Records", "type": "main", "index": 0}]]
     },
     "Prune Reject Records": {
+      "main": [[{"node": "Champions Check", "type": "main", "index": 0}]]
+    },
+    "Champions Check": {
       "main": [[{"node": "Sync Private State", "type": "main", "index": 0}]]
     }
   },

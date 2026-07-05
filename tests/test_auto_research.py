@@ -241,6 +241,26 @@ def test_select_seeds_prefers_cross_symbol_confirmed_combos() -> None:
     assert seeds[0]["fingerprint"] == "fp-confirmed"
 
 
+def test_portfolio_records_never_seed_single_symbol_refinement() -> None:
+    from strategy_lab.auto_research import select_seeds
+
+    portfolio = _record(
+        "regime_switch_pair",
+        {"risk_symbol": "SPY", "safe_symbol": "TLT", "trend_sma": 200},
+        80.0, oos_score=80.0,
+    )
+    portfolio["fingerprint"] = "fp-port"
+    ordinary = _record(
+        "rsi_pullback", {"entry_rsi": 40, "exit_rsi": 60, "rsi_period": 14, "sma_filter": 200},
+        66.0, oos_score=66.0,
+    )
+    ordinary["fingerprint"] = "fp-ord"
+    seeds = select_seeds([portfolio, ordinary], top_k=2)
+    names = [s["strategy"]["name"] for s in seeds]
+    assert "regime_switch_pair" not in names  # would error in the single-symbol engine
+    assert "rsi_pullback" in names
+
+
 def test_perturbation_respects_rsi_bounds() -> None:
     """exit_rsi must never be pushed past 99 — an RSI exit above 100 can never fire."""
     dataset = DatasetSpec(name="t", symbols=["QQQ"], timeframe="1D", start="2021-01-01", end="2021-12-31")

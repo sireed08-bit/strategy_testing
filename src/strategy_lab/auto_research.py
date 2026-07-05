@@ -51,6 +51,16 @@ PARAM_BOUNDS: dict[str, tuple[float, float]] = {
 # its parent's stability score), and every other family stops being explored.
 MAX_SEEDS_PER_FAMILY = 2
 
+# Multi-symbol switch strategies live in the same experiment log but cannot be
+# refined by THIS single-symbol loop: their perturbed children would hit the
+# single-symbol engine and error out every round. They are excluded from
+# seeding here until a portfolio-aware refinement loop exists.
+PORTFOLIO_STRATEGY_NAMES = {
+    "regime_switch_pair",
+    "relative_momentum_rotation",
+    "bond_low_risk_off",
+}
+
 
 def _perturb(value):
     """Candidate neighbour values one step away from a numeric parameter."""
@@ -70,6 +80,8 @@ def _eligible_seed(record: dict) -> bool:
     is not enough: top_robust_records ranks by in-sample score, and refining an
     OOS-unproven record turns the loop into an in-sample overfitting machine.
     """
+    if record["strategy"]["name"] in PORTFOLIO_STRATEGY_NAMES:
+        return False
     if record.get("grade") == "reject":
         return False
     validation = record.get("validation") or {}
@@ -153,7 +165,11 @@ def propose_refinements(
     # before scoping, or no sibling evidence would ever be visible.
     support = cross_symbol_support(records)
     scoped = [r for r in records if (r["dataset"].get("symbols") or ["?"])[0] == symbol]
-    seeds = select_seeds(scoped, top_k, symbol_support=support)
+    # Prefer seeds proven on the SAME dataset (deep refinement should follow
+    # deep evidence); fall back to any-symbol-matched records so the first
+    # round on a fresh dataset still has somewhere to start.
+    same_dataset = [r for r in scoped if r["dataset"].get("name") == dataset.name]
+    seeds = select_seeds(same_dataset or scoped, top_k, symbol_support=support)
 
     proposals: list[StrategySpec] = []
     for seed in seeds:
