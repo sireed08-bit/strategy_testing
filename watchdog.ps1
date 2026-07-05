@@ -105,6 +105,22 @@ if ($storageRoot) {
     }
 }
 
+# ── 4. experiment-log integrity ───────────────────────────────────────────────
+# OneDrive sync races corrupted the log twice before the data moved local; this
+# checks the tail is still valid JSON so corruption is named explicitly instead
+# of surfacing as a misleading "server down" alarm via /health 500s.
+$expLog = Join-Path $dataDir "experiments\experiment_log.jsonl"
+if (Test-Path $expLog) {
+    $tail = Get-Content $expLog -Tail 3 | Where-Object { $_.Trim() }
+    foreach ($line in $tail) {
+        try { $null = $line | ConvertFrom-Json -ErrorAction Stop }
+        catch {
+            $problems += "Experiment log tail is CORRUPT (invalid JSON) - run a salvage before the next batch."
+            break
+        }
+    }
+}
+
 # ── report ────────────────────────────────────────────────────────────────────
 if ($problems.Count -gt 0) {
     Send-Alarm "Strategy Lab watchdog: $($problems.Count) problem(s)" ($problems -join "`n")

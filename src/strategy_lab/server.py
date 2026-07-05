@@ -1266,13 +1266,26 @@ def scan_refresh(start: str = "2022-01-01") -> dict:
 
 
 @app.get("/evaluate-indicators")
-def evaluate_indicators(horizon: int = 5) -> dict:
-    """Rank every indicator by predictive edge (Information Coefficient)."""
+def evaluate_indicators(horizon: int = 5, dataset: str = "scanner") -> dict:
+    """
+    Rank every indicator by predictive edge (Information Coefficient).
+    dataset=scanner: cross-sectional, ~57 symbols, 2022+.
+    dataset=deep: the 4 ETFs over 2005+ — regime-tested IC, the stronger read
+    on whether an indicator's edge is real or an artifact of one market era.
+    """
     from strategy_lab.indicator_eval import evaluate_all_indicators
 
-    bars_by_symbol = _load_universe_bars()
+    if dataset == "deep":
+        csv = _deep_csv()
+        bars_by_symbol = {}
+        for symbol in _SYMBOLS:
+            bars, _ = load_price_bars_from_csv(csv, symbol)
+            bars_by_symbol[symbol] = bars
+    else:
+        bars_by_symbol = _load_universe_bars()
     results = evaluate_all_indicators(bars_by_symbol, primary_horizon=horizon)
     return {
+        "dataset": dataset,
         "universe_size": len(bars_by_symbol),
         "primary_horizon": horizon,
         "indicators": results,
