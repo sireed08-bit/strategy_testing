@@ -1,13 +1,18 @@
 # Strategy Lab autonomy watchdog.
 # Runs OUTSIDE the server (daily scheduled task) so it can detect the server
-# being down — an in-server health check cannot report its own death.
+# being down - an in-server health check cannot report its own death.
+#
+# NOTE: this file must stay PURE ASCII. PowerShell 5.1 reads BOM-less .ps1 as
+# ANSI, so any unicode character (em-dash, box-drawing, BOM literals in
+# regexes) silently corrupts patterns - that bug prevented ntfy alarms from
+# ever sending until 2026-07-04.
 #
 # Checks:
 #   1. /health responds. If not: attempt ONE restart via start_server.ps1,
 #      re-check, and alert either way (recovered vs still down).
-#   2. The newest research-run ledger entry is < 8 days old (the weekly
-#      grid-fill + auto-research cadence should never leave a gap that long).
+#   2. Newest research-run ledger entry is < 8 days old.
 #   3. Market data is < 14 days old.
+#   4. Experiment log tail parses as JSON (corruption named explicitly).
 #
 # Silent on success. Alerts via ntfy on any failure. Never prints .env contents.
 $ErrorActionPreference = "SilentlyContinue"
@@ -19,14 +24,18 @@ function Write-Log($msg) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $msg" | Add-Content -Path $log
 }
 
-# Read NTFY_TOPIC from the private .env without exposing anything else.
-$ntfyTopic = $null
-$envFile = Join-Path $root "private_controller\.env"
-if (Test-Path $envFile) {
+function Get-EnvValue($envFile, $name) {
+    if (-not (Test-Path $envFile)) { return $null }
     foreach ($line in Get-Content $envFile) {
-        if ($line -match '^﻿?NTFY_TOPIC\s*=\s*(.+)$') { $ntfyTopic = $Matches[1].Trim(); break }
+        if ($line -match '^\s*#') { continue }
+        # No start anchor: the first line may carry a UTF-8 BOM.
+        if ($line -match "$name\s*=\s*(.+)$") { return $Matches[1].Trim() }
     }
+    return $null
 }
+
+$envFile = Join-Path $root "private_controller\.env"
+$ntfyTopic = Get-EnvValue $envFile "NTFY_TOPIC"
 
 function Send-Alarm($title, $message) {
     Write-Log "ALARM: $title - $message"
@@ -40,7 +49,7 @@ function Send-Alarm($title, $message) {
 
 $problems = @()
 
-# ── 1. server health (with one self-heal attempt) ─────────────────────────────
+# -- 1. server health (with one self-heal attempt) ----------------------------
 $healthy = $false
 try {
     $h = Invoke-RestMethod "http://127.0.0.1:8078/health" -TimeoutSec 20
@@ -62,15 +71,8 @@ if (-not $healthy) {
     }
 }
 
-# ── 2. research-run freshness ─────────────────────────────────────────────────
-# Honor STRATEGY_DATA_DIR (hot data relocated out of OneDrive after sync-race
-# corruption); fall back to the in-repo path.
-$dataDir = $null
-if (Test-Path $envFile) {
-    foreach ($line in Get-Content $envFile) {
-        if ($line -match '^﻿?STRATEGY_DATA_DIR\s*=\s*(.+)$') { $dataDir = $Matches[1].Trim(); break }
-    }
-}
+# -- 2. research-run freshness -------------------------------------------------
+$dataDir = Get-EnvValue $envFile "STRATEGY_DATA_DIR"
 if (-not $dataDir) { $dataDir = Join-Path $root "data" }
 $runLog = Join-Path $dataDir "runs\research_runs.jsonl"
 if (Test-Path $runLog) {
@@ -83,16 +85,11 @@ if (Test-Path $runLog) {
         $problems += "No research run in $([math]::Round($ageDays,1)) days - the weekly schedule is not firing."
     }
 } else {
-    $problems += "Research run ledger is missing entirely."
+    $problems += "Research run ledger is missing at $runLog."
 }
 
-# ── 3. market-data freshness ──────────────────────────────────────────────────
-$storageRoot = $null
-if (Test-Path $envFile) {
-    foreach ($line in Get-Content $envFile) {
-        if ($line -match '^﻿?STRATEGY_PRIVATE_STORAGE_ROOT\s*=\s*(.+)$') { $storageRoot = $Matches[1].Trim(); break }
-    }
-}
+# -- 3. market-data freshness ---------------------------------------------------
+$storageRoot = Get-EnvValue $envFile "STRATEGY_PRIVATE_STORAGE_ROOT"
 if ($storageRoot) {
     $csv = Join-Path $storageRoot "data\market_data\alpaca_iex_etfs.csv"
     if (Test-Path $csv) {
@@ -105,10 +102,7 @@ if ($storageRoot) {
     }
 }
 
-# ── 4. experiment-log integrity ───────────────────────────────────────────────
-# OneDrive sync races corrupted the log twice before the data moved local; this
-# checks the tail is still valid JSON so corruption is named explicitly instead
-# of surfacing as a misleading "server down" alarm via /health 500s.
+# -- 4. experiment-log integrity ------------------------------------------------
 $expLog = Join-Path $dataDir "experiments\experiment_log.jsonl"
 if (Test-Path $expLog) {
     $tail = Get-Content $expLog -Tail 3 | Where-Object { $_.Trim() }
@@ -121,7 +115,7 @@ if (Test-Path $expLog) {
     }
 }
 
-# ── report ────────────────────────────────────────────────────────────────────
+# -- report ----------------------------------------------------------------------
 if ($problems.Count -gt 0) {
     Send-Alarm "Strategy Lab watchdog: $($problems.Count) problem(s)" ($problems -join "`n")
 } else {
