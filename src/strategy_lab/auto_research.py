@@ -108,24 +108,38 @@ def _seed_rank_key(record: dict) -> float:
     return min(record.get("stability_score", record["score"]), oos)
 
 
+def _defensive_rank_key(record: dict) -> float:
+    """
+    Rank for the DEFENSIVE objective: weakest evidence minus drawdown points.
+    A 7%-drawdown strategy scoring 65 (→58) outranks a 15%-drawdown one
+    scoring 70 (→55) — the search hunts crisis-alpha profiles, which the
+    21-year verdict showed are what this lab actually finds.
+    """
+    return _seed_rank_key(record) - record["metrics"].get("max_drawdown_pct", 100.0)
+
+
 def select_seeds(
     scoped_records: list[dict],
     top_k: int,
     symbol_support: dict[str, int] | None = None,
+    objective: str = "score",
 ) -> list[dict]:
     """
     OOS-eligible, family-diverse seeds ranked by their weakest evidence, with
     cross-symbol confirmation as the leading sort key: a combo that also holds
     up on sibling symbols outranks an equally-scored single-symbol result,
     because symbol-specific flukes rarely replicate across instruments.
+    objective="defensive" subtracts drawdown from the rank so refinement climbs
+    toward defender profiles instead of raw score.
     """
     support = symbol_support or {}
+    rank = _defensive_rank_key if objective == "defensive" else _seed_rank_key
     pool = top_robust_records(scoped_records, limit=top_k * 5)
     eligible = [record for record in pool if _eligible_seed(record)]
     eligible.sort(
         key=lambda record: (
             support.get(record.get("fingerprint"), 0) > 0,
-            _seed_rank_key(record),
+            rank(record),
         ),
         reverse=True,
     )
@@ -158,6 +172,7 @@ def propose_refinements(
     *,
     top_k: int = 6,
     max_new: int = 60,
+    objective: str = "score",
 ) -> list[StrategySpec]:
     """Neighbour specs around the top OOS-validated results for this symbol."""
     symbol = (dataset.symbols or ["?"])[0]
@@ -169,7 +184,9 @@ def propose_refinements(
     # deep evidence); fall back to any-symbol-matched records so the first
     # round on a fresh dataset still has somewhere to start.
     same_dataset = [r for r in scoped if r["dataset"].get("name") == dataset.name]
-    seeds = select_seeds(same_dataset or scoped, top_k, symbol_support=support)
+    seeds = select_seeds(
+        same_dataset or scoped, top_k, symbol_support=support, objective=objective
+    )
 
     proposals: list[StrategySpec] = []
     for seed in seeds:
@@ -284,6 +301,7 @@ def run_auto_research(
     top_k: int = 6,
     max_new_per_symbol: int = 60,
     end_cap: str | None = None,
+    objective: str = "score",
 ) -> dict:
     """One refinement round across all symbols. Returns a summary dict."""
     experiment_log = ExperimentLog(experiment_log_path)
@@ -302,7 +320,9 @@ def run_auto_research(
         bars, dataset = load_price_bars_from_csv(data_csv, symbol, end_cap=end_cap)
         explore_budget = max(1, int(max_new_per_symbol * EXPLORE_FRACTION))
         refinements = propose_refinements(
-            records, dataset, known, top_k=top_k, max_new=max_new_per_symbol - explore_budget
+            records, dataset, known,
+            top_k=top_k, max_new=max_new_per_symbol - explore_budget,
+            objective=objective,
         )
         explorations = propose_explorations(dataset, known, explore_budget, rng)
         proposals = refinements + explorations

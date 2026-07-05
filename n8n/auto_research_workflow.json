@@ -114,6 +114,30 @@
     },
     {
       "parameters": {
+        "url": "http://host.docker.internal:8078/defenders",
+        "options": {"timeout": 900000}
+      },
+      "id": "44444444-0000-0000-0000-000000000009",
+      "name": "Defenders Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1780, 300],
+      "notes": "The designation for what this lab verifiably finds: crisis-alpha profiles (OOS-valid, drawdown <= half benchmark, wins the down years). ntfy fires with blend stats when defenders qualify."
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8078/journal-drift",
+        "options": {"timeout": 300000}
+      },
+      "id": "44444444-0000-0000-0000-000000000010",
+      "name": "Journal Drift Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2000, 300],
+      "notes": "Is live tracking the backtest? Compares each journalled stream's realized win rate vs its backtest expectation; ntfy alarms on >25pt gaps with enough trades."
+    },
+    {
+      "parameters": {
         "url": "http://host.docker.internal:8078/sync-private",
         "method": "POST",
         "options": {"timeout": 120000}
@@ -122,7 +146,7 @@
       "name": "Sync Private State",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [1780, 300],
+      "position": [2220, 300],
       "notes": "Commit + push the refined (and now small) experiment log to the private state repo — the ONLY backup of the local hot data."
     }
   ],
@@ -146,6 +170,12 @@
       "main": [[{"node": "Champions Check", "type": "main", "index": 0}]]
     },
     "Champions Check": {
+      "main": [[{"node": "Defenders Check", "type": "main", "index": 0}]]
+    },
+    "Defenders Check": {
+      "main": [[{"node": "Journal Drift Check", "type": "main", "index": 0}]]
+    },
+    "Journal Drift Check": {
       "main": [[{"node": "Sync Private State", "type": "main", "index": 0}]]
     }
   },

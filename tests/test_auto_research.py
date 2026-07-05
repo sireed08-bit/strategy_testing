@@ -241,6 +241,42 @@ def test_select_seeds_prefers_cross_symbol_confirmed_combos() -> None:
     assert seeds[0]["fingerprint"] == "fp-confirmed"
 
 
+def test_defensive_objective_prefers_low_drawdown_seed() -> None:
+    from strategy_lab.auto_research import select_seeds
+
+    flashy = _record(
+        "rsi_pullback", {"entry_rsi": 40, "exit_rsi": 70, "rsi_period": 14, "sma_filter": 200},
+        70.0, oos_score=70.0,
+    )
+    flashy["fingerprint"] = "fp-flashy"
+    flashy["metrics"] = {"max_drawdown_pct": 15.0}
+    steady = _record(
+        "rsi_pullback", {"entry_rsi": 45, "exit_rsi": 60, "rsi_period": 28, "sma_filter": 250},
+        65.0, oos_score=65.0,
+    )
+    steady["fingerprint"] = "fp-steady"
+    steady["metrics"] = {"max_drawdown_pct": 7.0}
+
+    by_score = select_seeds([flashy, steady], top_k=2, objective="score")
+    assert by_score[0]["fingerprint"] == "fp-flashy"  # raw evidence wins
+    defensive = select_seeds([flashy, steady], top_k=2, objective="defensive")
+    assert defensive[0]["fingerprint"] == "fp-steady"  # 65-7=58 beats 70-15=55
+
+
+def test_allocation_sweep_covers_weights_and_picks_best_sharpe() -> None:
+    from strategy_lab.defenders import allocation_sweep
+    from tests.test_defenders import _crash_recovery_bars, _flat_sitter_spec
+
+    result = allocation_sweep(_flat_sitter_spec(), _crash_recovery_bars())
+    weights = [row["weight_defender"] for row in result["sweep"]]
+    assert weights == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert result["best_sharpe_weight"] in weights
+    # A flat sleeve against a crash-then-chop benchmark: adding defender weight
+    # must monotonically reduce drawdown.
+    dds = [row["max_drawdown_pct"] for row in result["sweep"]]
+    assert dds == sorted(dds, reverse=True)
+
+
 def test_portfolio_records_never_seed_single_symbol_refinement() -> None:
     from strategy_lab.auto_research import select_seeds
 

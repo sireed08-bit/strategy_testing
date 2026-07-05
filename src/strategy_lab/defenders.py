@@ -79,6 +79,37 @@ def _stats(returns: list[float]) -> dict:
     }
 
 
+BLEND_WEIGHTS = (0.25, 0.5, 0.75)
+
+
+def allocation_sweep(
+    strategy: StrategySpec,
+    bars: list[PriceBar],
+) -> dict:
+    """
+    The allocator's table for one defender: blend weight sweep against its own
+    benchmark, plus the answer to "which weight maximises Sharpe?" 50/50 is a
+    convention, not an optimum — this makes the tradeoff explicit.
+    """
+    ordered = sorted(bars, key=lambda bar: bar.date)
+    closes = [bar.close for bar in ordered]
+    benchmark_returns = [closes[i] / closes[i - 1] - 1.0 for i in range(1, len(closes))]
+    strat_returns = _strategy_daily_returns(strategy, ordered)
+    n = min(len(strat_returns), len(benchmark_returns))
+
+    rows = [{"weight_defender": 0.0, **_stats(benchmark_returns[:n])}]
+    for weight in BLEND_WEIGHTS:
+        blend = [
+            weight * strat_returns[i] + (1.0 - weight) * benchmark_returns[i]
+            for i in range(n)
+        ]
+        rows.append({"weight_defender": weight, **_stats(blend)})
+    rows.append({"weight_defender": 1.0, **_stats(strat_returns[:n])})
+
+    best = max(rows, key=lambda r: r["sharpe"])
+    return {"sweep": rows, "best_sharpe_weight": best["weight_defender"], "best": best}
+
+
 def evaluate_defender(
     strategy: StrategySpec,
     bars: list[PriceBar],

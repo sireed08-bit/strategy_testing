@@ -89,9 +89,11 @@ if (Test-Path $runLog) {
 }
 
 # -- 3. market-data freshness ---------------------------------------------------
+$marketDir = Get-EnvValue $envFile "STRATEGY_MARKET_DATA_DIR"
 $storageRoot = Get-EnvValue $envFile "STRATEGY_PRIVATE_STORAGE_ROOT"
-if ($storageRoot) {
-    $csv = Join-Path $storageRoot "data\market_data\alpaca_iex_etfs.csv"
+if (-not $marketDir -and $storageRoot) { $marketDir = Join-Path $storageRoot "data\market_data" }
+if ($marketDir) {
+    $csv = Join-Path $marketDir "alpaca_iex_etfs.csv"
     if (Test-Path $csv) {
         $dataAge = ((Get-Date) - (Get-Item $csv).LastWriteTime).TotalDays
         if ($dataAge -gt 14) {

@@ -1,4 +1,4 @@
-"""
+﻿"""
 FastAPI server that exposes Strategy Lab to n8n for autonomous scheduled research.
 
 Start from the project root:
@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from strategy_lab.alpaca_data import credentials_from_env, download_stock_bars_csv
 
-# ── load .env automatically so `uvicorn strategy_lab.server:app` just works ──
+# â”€â”€ load .env automatically so `uvicorn strategy_lab.server:app` just works â”€â”€
 def _bootstrap_env() -> None:
     env_file = Path(__file__).resolve().parents[2] / "private_controller" / ".env"
     if not env_file.exists():
@@ -45,7 +45,7 @@ from strategy_lab.models import StrategySpec
 from strategy_lab.reporting import top_records
 from strategy_lab.run_ledger import ResearchRunLedger
 
-# ── project layout ────────────────────────────────────────────────────────────
+# â”€â”€ project layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _ROOT = Path(__file__).resolve().parents[2]
 
 # High-frequency append files (experiment log, index, run ledger, journal, lock)
@@ -67,7 +67,7 @@ def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default).strip()
 
 
-# ── batch write lock ──────────────────────────────────────────────────────────
+# â”€â”€ batch write lock â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Only one batch may write the experiment log at a time. Without this, a manual
 # /run-all overlapping a scheduled (n8n) one interleaves JSONL lines and corrupts
 # the log. The lock is an atomic O_CREAT|O_EXCL file; a stale lock (dead process
@@ -89,7 +89,7 @@ def _batch_write_lock():
                 "A batch is already running (experiment log is locked). "
                 "Wait for it to finish or retry shortly.",
             )
-        _BATCH_LOCK.unlink(missing_ok=True)  # stale — reclaim it
+        _BATCH_LOCK.unlink(missing_ok=True)  # stale â€” reclaim it
     fd = os.open(str(_BATCH_LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     try:
         os.write(fd, f"{os.getpid()} {datetime.now(timezone.utc).isoformat()}".encode())
@@ -127,15 +127,25 @@ def _private_storage() -> Path:
     return Path(root)
 
 
+def _market_data_root() -> Path:
+    """Market-data CSVs. Relocatable out of OneDrive via STRATEGY_MARKET_DATA_DIR
+    â€” the sync engine that corrupted the append-heavy logs also races the
+    weekly whole-file rewrites here, just with a smaller window."""
+    override = _env("STRATEGY_MARKET_DATA_DIR")
+    if override:
+        return Path(override)
+    return _private_storage() / "data" / "market_data"
+
+
 def _data_csv() -> Path:
-    p = _private_storage() / "data" / "market_data" / "alpaca_iex_etfs.csv"
+    p = _market_data_root() / "alpaca_iex_etfs.csv"
     if not p.exists():
         raise HTTPException(500, f"Market data not found at {p}. Call /refresh-data first.")
     return p
 
 
 def _deep_csv() -> Path:
-    p = _private_storage() / "data" / "market_data" / "yahoo_deep_etfs.csv"
+    p = _market_data_root() / "yahoo_deep_etfs.csv"
     if not p.exists():
         raise HTTPException(500, f"Deep history not found at {p}. Call /refresh-deep-data first.")
     return p
@@ -169,7 +179,7 @@ def _private_state_repo() -> Path:
     return Path(override) if override else _ROOT.parent / "strategy_testing_private_state"
 
 
-# ── app ───────────────────────────────────────────────────────────────────────
+# â”€â”€ app â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 app = FastAPI(
     title="Strategy Lab",
     version="0.1.0",
@@ -180,7 +190,7 @@ app = FastAPI(
 )
 
 
-# ── health ────────────────────────────────────────────────────────────────────
+# â”€â”€ health â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/health")
 def health() -> dict:
@@ -199,7 +209,7 @@ def health() -> dict:
     }
 
 
-# ── status ────────────────────────────────────────────────────────────────────
+# â”€â”€ status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/status")
 def status() -> dict:
@@ -226,7 +236,7 @@ def status() -> dict:
     }
 
 
-# ── report ────────────────────────────────────────────────────────────────────
+# â”€â”€ report â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/report", response_class=PlainTextResponse)
 def report() -> str:
@@ -235,7 +245,7 @@ def report() -> str:
     return _REPORT.read_text(encoding="utf-8")
 
 
-# ── top results ───────────────────────────────────────────────────────────────
+# â”€â”€ top results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/top-results")
 def top_results(limit: int = 10) -> dict:
@@ -257,7 +267,7 @@ def top_results(limit: int = 10) -> dict:
     }
 
 
-# ── robust results (parameter-stability ranked) ───────────────────────────────
+# â”€â”€ robust results (parameter-stability ranked) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/robust-results")
 def robust_results(limit: int = 10) -> dict:
@@ -290,7 +300,7 @@ def robust_results(limit: int = 10) -> dict:
     }
 
 
-# ── statistical significance of the top results ───────────────────────────────
+# â”€â”€ statistical significance of the top results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/significance")
 def significance(limit: int = 8) -> dict:
@@ -299,7 +309,7 @@ def significance(limit: int = 8) -> dict:
     trade be zero-edge luck? Trades are re-derived on the same optimisation
     window the record was scored on (final-exam tail excluded). p near 0.5 =
     indistinguishable from noise; and with ~30k experiments run, even p=0.01
-    results appear by chance — a filter, not a proof.
+    results appear by chance â€” a filter, not a proof.
     """
     from strategy_lab.analysis import top_robust_records
     from strategy_lab.backtest import backtest_trades
@@ -339,7 +349,7 @@ def significance(limit: int = 8) -> dict:
     return {"results": results, "as_of": datetime.now(timezone.utc).isoformat()}
 
 
-# ── validated champions ───────────────────────────────────────────────────────
+# â”€â”€ validated champions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/champions")
 def champions(limit: int = 10) -> dict:
@@ -381,7 +391,7 @@ def champions(limit: int = 10) -> dict:
             champions_list.append({**row, "excess_return_pct": excess})
     if champions_list:
         _notify(
-            title=f"Strategy Lab — {len(champions_list)} validated champion(s)",
+            title=f"Strategy Lab â€” {len(champions_list)} validated champion(s)",
             message="\n".join(
                 f"{c['strategy']}/{c['symbol']} opt={c['optimized_score']} exam={c['exam_score']} excess={c['excess_return_pct']:+.1f}%"
                 for c in champions_list[:5]
@@ -401,16 +411,16 @@ def champions(limit: int = 10) -> dict:
     }
 
 
-# ── scanner-universe backtesting ──────────────────────────────────────────────
+# â”€â”€ scanner-universe backtesting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/run-scanner-batch")
 def run_scanner_batch(symbols: str = "", limit: int = 400, dataset: str = "scanner") -> dict:
     """
-    Run the strategy grid on single names — where dispersion and inefficiency
+    Run the strategy grid on single names â€” where dispersion and inefficiency
     actually live, unlike the arbitraged-flat index ETFs.
 
     dataset=deep (preferred for verdicts): 2005+ dividend-adjusted Yahoo
-    history — single names judged across every regime, not one era.
+    history â€” single names judged across every regime, not one era.
     dataset=scanner: the 2022+ Alpaca cross-section (fast, recent, split-only).
     """
     default_subset = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,JPM,XOM,UNH,XLE,XLF"
@@ -426,7 +436,7 @@ def run_scanner_batch(symbols: str = "", limit: int = 400, dataset: str = "scann
                     experiment_log_path=_EXPERIMENT_LOG,
                     run_log_path=_RUN_LOG,
                     report_path=_REPORT,
-                    purpose=f"Scanner-universe batch — {symbol} — {date_str}",
+                    purpose=f"Scanner-universe batch â€” {symbol} â€” {date_str}",
                     limit=limit,
                     data_csv=csv,
                     symbol=symbol,
@@ -441,14 +451,14 @@ def run_scanner_batch(symbols: str = "", limit: int = 400, dataset: str = "scann
                 results.append({"symbol": symbol, "status": "error", "error": str(exc)})
     created_total = sum(r.get("experiments_created", 0) for r in results)
     _notify(
-        title=f"Strategy Lab — scanner-universe batch ({date_str})",
+        title=f"Strategy Lab â€” scanner-universe batch ({date_str})",
         message=f"{created_total} experiments across {len(picked)} single names.",
         priority="default",
     )
     return {"runs": results, "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
-# ── defenders (crisis-alpha designation + blend analysis) ─────────────────────
+# â”€â”€ defenders (crisis-alpha designation + blend analysis) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/defenders")
 def defenders(limit: int = 12) -> dict:
@@ -507,7 +517,7 @@ def defenders(limit: int = 12) -> dict:
     qualified = [r for r in results if r["qualified"]]
     if qualified:
         _notify(
-            title=f"Strategy Lab — {len(qualified)} validated defender(s)",
+            title=f"Strategy Lab â€” {len(qualified)} validated defender(s)",
             message="\n".join(
                 f"{d['strategy']}/{d['symbol']} ({d['dataset']}) dd {d['strategy_dd_pct']}% vs bench {d['benchmark_dd_pct']}%, "
                 f"down-years {d['down_years']}, blend-Sharpe-improves={d.get('blend_improves_sharpe')}"
@@ -522,12 +532,78 @@ def defenders(limit: int = 12) -> dict:
     }
 
 
-# ── per-year regime breakdown ─────────────────────────────────────────────────
+# â”€â”€ allocation (the actionable output: how much defender vs buy-and-hold) â”€â”€â”€â”€â”€
+
+@app.get("/allocation")
+def allocation(limit: int = 12) -> dict:
+    """
+    For each QUALIFIED defender, sweep blend weights (0/25/50/75/100% defender)
+    against its own benchmark and report the Sharpe-maximising mix â€” turning
+    "defenders exist" into "here is the portfolio an allocator would hold".
+    """
+    from strategy_lab.analysis import top_robust_records
+    from strategy_lab.batch_runner import trim_final_exam
+    from strategy_lab.defenders import allocation_sweep, evaluate_defender
+    from strategy_lab.models import StrategySpec
+
+    stem_to_dataset = {"alpaca_iex_etfs": "default", "yahoo_deep_etfs": "deep",
+                       _SCANNER_CSV_NAME.replace(".csv", ""): "scanner"}
+    records = ExperimentLog(_EXPERIMENT_LOG).records()
+    bars_cache: dict = {}
+    tables = []
+    for record in top_robust_records(records, limit=limit):
+        s = record["strategy"]
+        if s["name"] in {"regime_switch_pair", "relative_momentum_rotation", "bond_low_risk_off"}:
+            continue
+        dataset_key = stem_to_dataset.get(record["dataset"].get("name"))
+        if dataset_key is None:
+            continue
+        symbol = (record["dataset"]["symbols"] or ["?"])[0]
+        cache_key = (dataset_key, symbol)
+        if cache_key not in bars_cache:
+            try:
+                bars, _ = load_price_bars_from_csv(
+                    _select_csv(dataset_key), symbol, end_cap=_vintage_end(dataset_key)
+                )
+                bars_cache[cache_key] = trim_final_exam(bars)
+            except Exception:
+                bars_cache[cache_key] = None
+        if not bars_cache[cache_key]:
+            continue
+        spec = StrategySpec(
+            family=s["family"], name=s["name"],
+            hypothesis=s.get("hypothesis", ""), rules=s.get("rules", {}),
+            parameters=s["parameters"], risk_model=s.get("risk_model", {}),
+        )
+        assessment = evaluate_defender(spec, bars_cache[cache_key], record)
+        if not assessment["qualified"]:
+            continue
+        sweep = allocation_sweep(spec, bars_cache[cache_key])
+        tables.append({
+            "strategy": s["name"],
+            "symbol": symbol,
+            "dataset": dataset_key,
+            "parameters": s["parameters"],
+            "risk_model": s.get("risk_model", {}),
+            **sweep,
+        })
+    return {
+        "note": (
+            "weight_defender=0.0 is pure buy-and-hold of the symbol; 1.0 is the "
+            "pure defender sleeve. best_sharpe_weight is the risk-adjusted optimum "
+            "on the optimisation window (exam tail excluded)."
+        ),
+        "allocations": tables,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# â”€â”€ per-year regime breakdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/regime-report")
 def regime_report(limit: int = 5, dataset: str = "default") -> dict:
     """
-    Yearly strategy-vs-benchmark returns for the top robust strategies —
+    Yearly strategy-vs-benchmark returns for the top robust strategies â€”
     "did it earn everything in one lucky year?" Evaluated on the same pinned,
     exam-trimmed window the records were scored on, so the held-out tail's
     years stay unseen.
@@ -573,12 +649,12 @@ def regime_report(limit: int = 5, dataset: str = "default") -> dict:
     return {"dataset": dataset, "results": results, "as_of": datetime.now(timezone.utc).isoformat()}
 
 
-# ── final exam (true holdout, never touched by optimisation) ──────────────────
+# â”€â”€ final exam (true holdout, never touched by optimisation) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/final-exam")
 def final_exam(limit: int = 5) -> dict:
     """
-    Evaluate the current top robust strategies on the held-out exam tail — the
+    Evaluate the current top robust strategies on the held-out exam tail â€” the
     most recent FINAL_EXAM_FRACTION of history that scoring, OOS gating, and
     auto-research never see. This is the only honest read on whether a champion
     generalises. Use sparingly: every look at the exam window spends some of its
@@ -642,7 +718,7 @@ def final_exam(limit: int = 5) -> dict:
     }
 
 
-# ── live signals ─────────────────────────────────────────────────────────────
+# â”€â”€ live signals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/signals")
 def signals(limit: int = 10) -> dict:
@@ -651,7 +727,7 @@ def signals(limit: int = 10) -> dict:
     and return whether each is currently signaling entry, hold, or exit.
 
     Run /refresh-data first each morning to pick up yesterday's close.
-    Signal state is based on the last two bars in the CSV — no lookahead.
+    Signal state is based on the last two bars in the CSV â€” no lookahead.
     """
     records = ExperimentLog(_EXPERIMENT_LOG).records()
     best = top_records(records, limit=limit)
@@ -724,18 +800,18 @@ def signals(limit: int = 10) -> dict:
     active = [r for r in results if r["signal"] in ("entry", "exit")]
     if active:
         lines = "\n".join(
-            f"{r['signal'].upper()} — {r['strategy']} on {r['symbol']} "
+            f"{r['signal'].upper()} â€” {r['strategy']} on {r['symbol']} "
             f"(score={r['score']}, close=${r['last_close']})"
             for r in active
         )
         _notify(
-            title=f"Strategy Lab — {len(active)} signal(s) on {results[0]['last_bar_date']}",
-            message=f"{lines}\n\nResearch signals only — not live trade recommendations.",
+            title=f"Strategy Lab â€” {len(active)} signal(s) on {results[0]['last_bar_date']}",
+            message=f"{lines}\n\nResearch signals only â€” not live trade recommendations.",
             priority="high",
         )
     errored = [r for r in results if r["signal"] == "error"]
 
-    # Journal today's signals — the forward walk-forward record. Best-effort:
+    # Journal today's signals â€” the forward walk-forward record. Best-effort:
     # a journaling failure must never block signal delivery to n8n.
     journaled = 0
     journal_error = None
@@ -756,7 +832,7 @@ def signals(limit: int = 10) -> dict:
     }
 
 
-# ── external signals (TradingView alerts etc. → the same forward journal) ─────
+# â”€â”€ external signals (TradingView alerts etc. â†’ the same forward journal) â”€â”€â”€â”€â”€
 
 class ExternalSignal(BaseModel):
     source: str = "tradingview"
@@ -774,7 +850,7 @@ def external_signal(sig: ExternalSignal) -> dict:
     Journal a signal from an EXTERNAL system (e.g. a TradingView alert webhook
     routed through n8n) into the same forward journal the lab's own strategies
     use. External ideas earn the identical walk-forward accounting: T+1 fills,
-    costs, benchmark comparison — so a Pine strategy or a YouTube guru's system
+    costs, benchmark comparison â€” so a Pine strategy or a YouTube guru's system
     builds the same kind of forward record before anyone trusts it.
     """
     from strategy_lab.signal_journal import append_signals
@@ -803,7 +879,7 @@ def external_signal(sig: ExternalSignal) -> dict:
     }
 
 
-# ── forward journal (walk-forward record of past signals) ────────────────────
+# â”€â”€ forward journal (walk-forward record of past signals) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/journal")
 def journal() -> dict:
@@ -811,7 +887,7 @@ def journal() -> dict:
     Forward performance of every signal the lab has journalled: hypothetical
     T+1 fills with costs, per strategy stream, against buy-and-hold of the same
     symbol over the same span. This record was written before the future
-    happened — the one kind of evidence no backtest can fake.
+    happened â€” the one kind of evidence no backtest can fake.
     """
     from strategy_lab.signal_journal import evaluate_journal
 
@@ -831,14 +907,14 @@ def journal() -> dict:
     return report
 
 
-# ── journal drift (is live tracking the backtest?) ────────────────────────────
+# â”€â”€ journal drift (is live tracking the backtest?) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.get("/journal-drift")
 def journal_drift(min_trades: int = 5) -> dict:
     """
     Compare each journalled stream's REALIZED forward results against the
     matching experiment record's backtest expectation (win rate). Large drift
-    with enough trades means the live behaviour doesn't match what was tested —
+    with enough trades means the live behaviour doesn't match what was tested â€”
     the earliest warning that a backtest was fit to conditions that ended.
     Thin streams are reported but not judged.
     """
@@ -883,14 +959,14 @@ def journal_drift(min_trades: int = 5) -> dict:
     drifting = [s for s in streams if s["verdict"] == "drifting"]
     if drifting:
         _notify(
-            title=f"Strategy Lab — {len(drifting)} stream(s) drifting from backtest",
+            title=f"Strategy Lab â€” {len(drifting)} stream(s) drifting from backtest",
             message="\n".join(f"{d['strategy']}/{d['symbol']} gap={d['win_rate_gap']}pts" for d in drifting[:5]),
             priority="high",
         )
     return {"streams": streams, "as_of": datetime.now(timezone.utc).isoformat()}
 
 
-# ── run single symbol ─────────────────────────────────────────────────────────
+# â”€â”€ run single symbol â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class BatchRequest(BaseModel):
     symbol: str = "SPY"
@@ -902,7 +978,7 @@ class BatchRequest(BaseModel):
 @app.post("/run-batch")
 def run_batch(req: BatchRequest) -> dict:
     purpose = req.purpose or (
-        f"Autonomous batch — {req.symbol} — {datetime.now(timezone.utc).date().isoformat()}"
+        f"Autonomous batch â€” {req.symbol} â€” {datetime.now(timezone.utc).date().isoformat()}"
     )
     try:
         with _batch_write_lock():
@@ -923,7 +999,7 @@ def run_batch(req: BatchRequest) -> dict:
         raise HTTPException(500, str(exc))
 
 
-# ── run all 4 symbols (main autonomous action) ────────────────────────────────
+# â”€â”€ run all 4 symbols (main autonomous action) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/run-all")
 def run_all(limit: int = 400, dataset: str = "default") -> dict:
@@ -937,7 +1013,7 @@ def _run_all_locked(limit: int, dataset: str = "default") -> dict:
     date_str = datetime.now(timezone.utc).date().isoformat()
     results = []
     for symbol in _SYMBOLS:
-        purpose = f"Autonomous batch — {symbol} — {date_str}"
+        purpose = f"Autonomous batch â€” {symbol} â€” {date_str}"
         try:
             result = run_backtest_batch(
                 experiment_log_path=_EXPERIMENT_LOG,
@@ -962,7 +1038,7 @@ def _run_all_locked(limit: int, dataset: str = "default") -> dict:
     created_total = sum(r.get("experiments_created", 0) for r in results)
     grades = Counter(r.get("grade") for r in ExperimentLog(_EXPERIMENT_LOG).records())
     _notify(
-        title=f"Strategy Lab — batch complete ({date_str})",
+        title=f"Strategy Lab â€” batch complete ({date_str})",
         message=(
             f"{created_total} new experiments across {len(results)} symbols\n"
             f"Candidates: {grades.get('candidate', 0)}  "
@@ -975,7 +1051,7 @@ def _run_all_locked(limit: int, dataset: str = "default") -> dict:
     return payload
 
 
-# ── maintenance: prune reject-grade records ───────────────────────────────────
+# â”€â”€ maintenance: prune reject-grade records â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/prune")
 def prune() -> dict:
@@ -990,7 +1066,7 @@ def prune() -> dict:
     with _batch_write_lock():
         result = prune_experiment_log(_EXPERIMENT_LOG, archive_path)
     _notify(
-        title="Strategy Lab — log pruned",
+        title="Strategy Lab â€” log pruned",
         message=(
             f"Archived {result['archived_this_run']} reject records to private storage. "
             f"Hot log now {result['hot_log_records']} records."
@@ -1000,15 +1076,22 @@ def prune() -> dict:
     return {**result, "archive_path": str(archive_path), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
-# ── autonomous research loop ──────────────────────────────────────────────────
+# â”€â”€ autonomous research loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/auto-research")
-def auto_research(top_k: int = 6, max_new_per_symbol: int = 60, dataset: str = "default") -> dict:
+def auto_research(
+    top_k: int = 6,
+    max_new_per_symbol: int = 60,
+    dataset: str = "default",
+    objective: str = "score",
+) -> dict:
     """
     One bounded hill-climbing round: refine parameters around the current top
     out-of-sample-robust results, backtest the neighbours, keep what survives.
-    Safe to schedule — it only adds OOS-gated experiments, never edits code/grids.
+    Safe to schedule â€” it only adds OOS-gated experiments, never edits code/grids.
     dataset=deep refines against the 2005+ multi-regime history.
+    objective=defensive ranks seeds by weakest-evidence-minus-drawdown, pointing
+    the climb at the crisis-alpha profiles this lab demonstrably finds.
     """
     from strategy_lab.auto_research import run_auto_research
 
@@ -1022,25 +1105,26 @@ def auto_research(top_k: int = 6, max_new_per_symbol: int = 60, dataset: str = "
             top_k=top_k,
             max_new_per_symbol=max_new_per_symbol,
             end_cap=_vintage_end(dataset),
+            objective=objective,
         )
     headline = (
         f"+{result['experiments_created']} refined experiments. "
-        f"Best score {result['best_score_before']} → {result['best_score_after']}"
+        f"Best score {result['best_score_before']} â†’ {result['best_score_after']}"
         + (" (improved)" if result["improved"] else " (no improvement)")
     )
     _notify(
-        title="Strategy Lab — auto-research round complete",
+        title="Strategy Lab â€” auto-research round complete",
         message=f"{headline}\nCandidates: {result['candidates']}  Promising: {result['promising']}",
         priority="default",
     )
     return {**result, "headline": headline, "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
-# ── refresh market data ───────────────────────────────────────────────────────
+# â”€â”€ refresh market data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/refresh-data")
 def refresh_data(start: str = "2020-01-01", force: bool = False) -> dict:
-    output = _private_storage() / "data" / "market_data" / "alpaca_iex_etfs.csv"
+    output = _market_data_root() / "alpaca_iex_etfs.csv"
     end = datetime.now(timezone.utc).date().isoformat()
 
     if not force and output.exists():
@@ -1070,13 +1154,13 @@ def refresh_data(start: str = "2020-01-01", force: bool = False) -> dict:
         raise HTTPException(500, str(exc))
 
 
-# ── dataset vintage control ───────────────────────────────────────────────────
+# â”€â”€ dataset vintage control â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/advance-vintage")
 def advance_vintage(dataset: str = "default") -> dict:
     """
     Deliberately move a dataset's pinned research end-date to the CSV's current
-    last bar. EVERY fingerprint for that dataset rotates — the grid re-runs
+    last bar. EVERY fingerprint for that dataset rotates â€” the grid re-runs
     under the new vintage on subsequent batches. Do this occasionally and on
     purpose (e.g. quarterly), never as a side effect of a data refresh.
     """
@@ -1084,9 +1168,9 @@ def advance_vintage(dataset: str = "default") -> dict:
 
     result = advance_dataset_vintage(_VINTAGE_FILE, dataset or "default", _select_csv(dataset))
     _notify(
-        title="Strategy Lab — dataset vintage advanced",
+        title="Strategy Lab â€” dataset vintage advanced",
         message=(
-            f"{result['dataset']}: {result['previous']} → {result['current']}. "
+            f"{result['dataset']}: {result['previous']} â†’ {result['current']}. "
             "All fingerprints for this dataset rotate; the grid will re-run on "
             "coming batches."
         ),
@@ -1095,14 +1179,14 @@ def advance_vintage(dataset: str = "default") -> dict:
     return result
 
 
-# ── multi-symbol (switch/rotation) portfolio research ─────────────────────────
+# â”€â”€ multi-symbol (switch/rotation) portfolio research â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 _PORTFOLIO_SYMBOLS = ["SPY", "QQQ", "IWM", "DIA", "TLT", "IEF", "GLD"]
 _PORTFOLIO_CSV_NAME = "portfolio_etfs.csv"
 
 
 def _portfolio_csv() -> Path:
-    p = _private_storage() / "data" / "market_data" / _PORTFOLIO_CSV_NAME
+    p = _market_data_root() / _PORTFOLIO_CSV_NAME
     if not p.exists():
         raise HTTPException(500, f"Portfolio data not found at {p}. Call /refresh-portfolio-data first.")
     return p
@@ -1112,7 +1196,7 @@ def _portfolio_csv() -> Path:
 def refresh_portfolio_data(start: str = "2005-01-01", append: bool = True) -> dict:
     """
     Download the multi-symbol universe (equities + bonds + gold) from Yahoo:
-    2005+ WITH dividends. Both properties are essential here — the risk-off
+    2005+ WITH dividends. Both properties are essential here â€” the risk-off
     families' entire reason to exist is 2008, and bond returns are mostly
     distributions (price-only TLT understates it by 3-4%/yr, which would
     grossly distort every switch strategy's value). Append-preserving like the
@@ -1120,7 +1204,7 @@ def refresh_portfolio_data(start: str = "2005-01-01", append: bool = True) -> di
     """
     from strategy_lab.yahoo_data import download_deep_history_csv
 
-    output = _private_storage() / "data" / "market_data" / _PORTFOLIO_CSV_NAME
+    output = _market_data_root() / _PORTFOLIO_CSV_NAME
     end = datetime.now(timezone.utc).date().isoformat()
     try:
         rows = download_deep_history_csv(
@@ -1136,7 +1220,7 @@ def refresh_portfolio_data(start: str = "2005-01-01", append: bool = True) -> di
 def run_portfolio() -> dict:
     """
     Evaluate every combo in the portfolio_strategies grid: switch/rotation
-    strategies holding one symbol at a time (or cash) — the classes the
+    strategies holding one symbol at a time (or cash) â€” the classes the
     single-symbol engine cannot express. Same discipline as everything else:
     costs, exam trim, warm OOS, benchmark-relative scoring (benchmark = the
     risk leg's buy-and-hold), fingerprints, dedup, one log.
@@ -1205,7 +1289,7 @@ def run_portfolio() -> dict:
                     except (ValueError, KeyError) as exc:
                         errored += 1
     _notify(
-        title="Strategy Lab — portfolio batch complete",
+        title="Strategy Lab â€” portfolio batch complete",
         message=f"{created} portfolio experiments created ({skipped} known, {errored} errored).",
         priority="default",
     )
@@ -1215,20 +1299,20 @@ def run_portfolio() -> dict:
     }
 
 
-# ── deep history (Yahoo, 2005+) ───────────────────────────────────────────────
+# â”€â”€ deep history (Yahoo, 2005+) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/refresh-deep-data")
 def refresh_deep_data(start: str = "2005-01-01", symbols: str = "", append: bool = True) -> dict:
     """
     Download two decades of adjusted daily bars from Yahoo's chart API.
     Default mode appends NEW symbols only, preserving existing rows byte-for-
-    byte (Yahoo recomputes adjusted history continuously — re-downloading an
+    byte (Yahoo recomputes adjusted history continuously â€” re-downloading an
     existing symbol would silently change data under old fingerprints; do that
     only deliberately with append=false + /advance-vintage).
     """
     from strategy_lab.yahoo_data import download_deep_history_csv
 
-    output = _private_storage() / "data" / "market_data" / "yahoo_deep_etfs.csv"
+    output = _market_data_root() / "yahoo_deep_etfs.csv"
     end = datetime.now(timezone.utc).date().isoformat()
     wanted = [s.strip().upper() for s in symbols.split(",") if s.strip()] or _SYMBOLS
     try:
@@ -1244,7 +1328,7 @@ def refresh_deep_data(start: str = "2005-01-01", symbols: str = "", append: bool
         raise HTTPException(502, f"Deep history download failed: {exc}")
 
 
-# ── AI research suggestions ───────────────────────────────────────────────────
+# â”€â”€ AI research suggestions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/suggest")
 def suggest() -> dict:
@@ -1280,7 +1364,7 @@ def suggest() -> dict:
             data = json.loads(resp.read())
             text = data["choices"][0]["message"]["content"]
             _notify(
-                title="Strategy Lab — research suggestions ready",
+                title="Strategy Lab â€” research suggestions ready",
                 message=text[:1500],
                 priority="default",
             )
@@ -1326,12 +1410,12 @@ def _build_suggestion_prompt(records: list[dict]) -> str:
     return f"""You are a quantitative strategy research assistant. Analyze these backtest results and \
 provide specific, actionable research suggestions.
 
-## How this lab defines "good" (read carefully — it changed)
+## How this lab defines "good" (read carefully â€” it changed)
 - Results are NET of 5bps/side costs with T+1 fills and realistic stop fills.
 - EXCESS return (strategy minus buy-and-hold on the same bars) carries heavy \
 scoring weight: a strategy that loses to simply holding the symbol is NOT a \
 finding, whatever its absolute return. Most long-only timing on liquid index \
-ETFs fails this bar — that is expected, not a bug.
+ETFs fails this bar â€” that is expected, not a bug.
 - Every result is out-of-sample gated (train 70% / warm-indicator test 30%), \
 and the most recent 15% of history is a held-out final exam nothing optimises \
 against. Cross-symbol confirmation and bootstrap significance exist as extra \
@@ -1341,7 +1425,7 @@ filters. Suggest strategies that could survive ALL of that, not just fit.
 
 Total experiments: {len(records)}
 Grades: {dict(grades)}
-Scoring: candidate ≥ 80, promising 65-79, watch 45-64, reject < 45
+Scoring: candidate â‰¥ 80, promising 65-79, watch 45-64, reject < 45
 
 ## Strategy families
 {family_lines}
@@ -1359,11 +1443,11 @@ Provide 4-6 specific, evidence-based research suggestions. For each:
 3. **Expected outcome**: likely grade change or what the experiment would reveal
 
 Prioritise POSITIVE EXCESS RETURN with out-of-sample survival over raw score. \
-Be concrete — cite specific parameter values, thresholds, or data decisions. \
+Be concrete â€” cite specific parameter values, thresholds, or data decisions. \
 Do not repeat what has already been exhaustively tested in the results above."""
 
 
-# ── market scanner ────────────────────────────────────────────────────────────
+# â”€â”€ market scanner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _scanner_universe() -> list[str]:
     override = _env("SCANNER_UNIVERSE")
@@ -1374,7 +1458,7 @@ def _scanner_universe() -> list[str]:
 
 
 def _scanner_csv() -> Path:
-    return _private_storage() / "data" / "market_data" / _SCANNER_CSV_NAME
+    return _market_data_root() / _SCANNER_CSV_NAME
 
 
 def _load_universe_bars() -> dict:
@@ -1418,7 +1502,7 @@ def evaluate_indicators(horizon: int = 5, dataset: str = "scanner") -> dict:
     """
     Rank every indicator by predictive edge (Information Coefficient).
     dataset=scanner: cross-sectional, ~57 symbols, 2022+.
-    dataset=deep: the 4 ETFs over 2005+ — regime-tested IC, the stronger read
+    dataset=deep: the 4 ETFs over 2005+ â€” regime-tested IC, the stronger read
     on whether an indicator's edge is real or an artifact of one market era.
     """
     from strategy_lab.indicator_eval import evaluate_all_indicators
@@ -1458,8 +1542,8 @@ def scan(top_n: int = 20, min_abs_ic: float = 0.03, horizon: int = 5) -> dict:
         )
         used = ", ".join(result["indicators_used"].keys())
         _notify(
-            title=f"Market Scanner — top {min(10, len(watchlist))} of {len(bars_by_symbol)}",
-            message=f"Indicators: {used}\n\n{lines}\n\nResearch scan only — not trade advice.",
+            title=f"Market Scanner â€” top {min(10, len(watchlist))} of {len(bars_by_symbol)}",
+            message=f"Indicators: {used}\n\n{lines}\n\nResearch scan only â€” not trade advice.",
             priority="default",
         )
     return {
@@ -1471,7 +1555,7 @@ def scan(top_n: int = 20, min_abs_ic: float = 0.03, horizon: int = 5) -> dict:
     }
 
 
-# ── sync private state repo ───────────────────────────────────────────────────
+# â”€â”€ sync private state repo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.post("/sync-private")
 def sync_private() -> dict:
@@ -1505,7 +1589,7 @@ def sync_private() -> dict:
 
     try:
         subprocess.run(
-            # Stage everything synced under data/ and reports/ — the old
+            # Stage everything synced under data/ and reports/ â€” the old
             # explicit path list silently omitted newer files (the signal
             # journal was copied but never committed).
             ["git", "-C", str(private), "add", "data", "reports"],
@@ -1522,7 +1606,7 @@ def sync_private() -> dict:
         grades = Counter(r.get("grade") for r in records)
         date_str = datetime.now(timezone.utc).date().isoformat()
         msg = (
-            f"autonomous update — {date_str}\n\n"
+            f"autonomous update â€” {date_str}\n\n"
             f"{len(records)} total experiments: "
             f"{grades.get('candidate', 0)} candidate, "
             f"{grades.get('promising', 0)} promising, "
@@ -1537,7 +1621,8 @@ def sync_private() -> dict:
             ["git", "-C", str(private), "push", "origin", "main"],
             check=True, capture_output=True,
         )
-        return {"status": "ok", "message": f"Synced and pushed — {date_str}"}
+        return {"status": "ok", "message": f"Synced and pushed â€” {date_str}"}
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode() if exc.stderr else str(exc)
         raise HTTPException(500, f"Git error: {stderr}")
+
