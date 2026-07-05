@@ -40,13 +40,14 @@ def run_backtest(
     closes = [bar.close for bar in ordered]
     lows = [bar.low for bar in ordered]
     opens = [bar.open for bar in ordered]
-    stop_loss_pct = float(strategy.risk_model.get("stop_loss_pct", 0))
-    vol_target_pct = float(strategy.risk_model.get("vol_target_pct", 0))
+    highs = [bar.high for bar in ordered]
     signals = build_signals_from_bars(strategy, ordered)
     equity_curve, daily_returns, trades = simulate_long_only(
         closes, signals, cost_bps,
-        stop_loss_pct=stop_loss_pct, lows=lows, opens=opens,
-        vol_target_pct=vol_target_pct,
+        stop_loss_pct=float(strategy.risk_model.get("stop_loss_pct", 0)),
+        lows=lows, opens=opens, highs=highs,
+        vol_target_pct=float(strategy.risk_model.get("vol_target_pct", 0)),
+        profit_target_atr=float(strategy.risk_model.get("profit_target_atr", 0)),
     )
     return assemble_metrics(equity_curve, daily_returns, trades, signals, closes)
 
@@ -110,7 +111,9 @@ def yearly_breakdown(
         stop_loss_pct=float(strategy.risk_model.get("stop_loss_pct", 0)),
         lows=[bar.low for bar in ordered],
         opens=[bar.open for bar in ordered],
+        highs=[bar.high for bar in ordered],
         vol_target_pct=float(strategy.risk_model.get("vol_target_pct", 0)),
+        profit_target_atr=float(strategy.risk_model.get("profit_target_atr", 0)),
     )
 
     # daily_returns[i-1] covers the move from bars[i-1] to bars[i]; attribute it
@@ -157,6 +160,8 @@ def backtest_trades(
         stop_loss_pct=float(strategy.risk_model.get("stop_loss_pct", 0)),
         lows=[bar.low for bar in ordered],
         opens=[bar.open for bar in ordered],
+        highs=[bar.high for bar in ordered],
+        profit_target_atr=float(strategy.risk_model.get("profit_target_atr", 0)),
     )
     return trades
 
@@ -199,7 +204,9 @@ def run_backtest_window(
         stop_loss_pct=stop_loss_pct,
         lows=lows[start_index:],
         opens=opens[start_index:],
+        highs=[bar.high for bar in ordered][start_index:],
         vol_target_pct=float(strategy.risk_model.get("vol_target_pct", 0)),
+        profit_target_atr=float(strategy.risk_model.get("profit_target_atr", 0)),
     )
     return assemble_metrics(equity_curve, daily_returns, trades, window_signals, window_closes)
 
@@ -404,6 +411,8 @@ def simulate_long_only(
     lows: list[float | None] | None = None,
     opens: list[float | None] | None = None,
     vol_target_pct: float = 0.0,
+    profit_target_atr: float = 0.0,
+    highs: list[float | None] | None = None,
 ) -> tuple[list[float], list[float], list[float]]:
     """
     Long-only equity simulation with realistic execution.
@@ -418,14 +427,25 @@ def simulate_long_only(
       — never the close, which would credit intraday recoveries a real stop order
       would have missed. After a stop-out the simulation stays flat until the
       strategy's own signal resets, so a stopped trade is not re-entered next bar.
+    - Profit target: when profit_target_atr > 0, a position exits once the bar
+      HIGH touches entry + mult × ATR(14 at entry) — a limit order filled at the
+      target, or at the open when the bar gapped above it. When a stop and a
+      target could both fire on the same bar, the stop wins (conservative: we
+      never assume the favourable intrabar path).
     """
     cost = cost_bps / 10_000.0
     # Shift signals forward one bar to enforce T+1 execution.
     effective = ([False] + signals[:-1]) if signals else []
     stop_fills: dict[int, float] = {}
-    if stop_loss_pct > 0:
-        effective, stop_fills = _apply_stop_loss(
-            effective, closes, stop_loss_pct / 100.0, lows, opens
+    if stop_loss_pct > 0 or profit_target_atr > 0:
+        effective, stop_fills = _apply_price_exits(
+            effective,
+            closes,
+            stop_loss_pct / 100.0,
+            profit_target_atr,
+            lows,
+            highs,
+            opens,
         )
 
     # Volatility targeting: scale exposure so realised risk approaches a fixed
@@ -490,58 +510,119 @@ def simulate_long_only(
     return equity_curve, daily_returns, trades
 
 
-def _apply_stop_loss(
+def _entry_atr(
+    closes: list[float],
+    highs: list[float | None] | None,
+    lows: list[float | None] | None,
+    index: int,
+    period: int = 14,
+) -> float:
+    """ATR over the `period` bars ending at `index` — true range when OHLC is
+    available, close-to-close change otherwise. Used to size profit targets."""
+    start = max(1, index - period + 1)
+    if start > index:
+        return 0.0
+    ranges: list[float] = []
+    for i in range(start, index + 1):
+        high = highs[i] if (highs is not None and highs[i] is not None) else None
+        low = lows[i] if (lows is not None and lows[i] is not None) else None
+        prev_close = closes[i - 1]
+        if high is not None and low is not None:
+            ranges.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+        else:
+            ranges.append(abs(closes[i] - prev_close))
+    return sum(ranges) / len(ranges) if ranges else 0.0
+
+
+def _apply_price_exits(
     effective: list[bool],
     closes: list[float],
     stop: float,
+    target_mult: float,
     lows: list[float | None] | None,
+    highs: list[float | None] | None,
     opens: list[float | None] | None = None,
 ) -> tuple[list[bool], dict[int, float]]:
     """
-    Force-exit a position once price falls `stop` (fraction) below its entry.
+    Force-exit positions on a stop-loss and/or an ATR-multiple profit target.
 
     Returns the adjusted signal series plus {bar_index: fill_price} for each
-    stop-out. The fill is the stop price when the bar traded through it, or the
-    open when the bar gapped below the stop before trading (you cannot fill
-    better than the open). The stop is tested against the bar low when available
-    (a realistic intraday trigger), otherwise the close — and with close-only
-    data the fill is the close itself, since that is the only known price.
+    forced exit.
 
-    After a stop-out the position stays flat until the underlying signal resets
-    (goes flat, then fires again) so a stopped trade is not re-entered on the
-    very next bar.
+    Stop (stop > 0): exit once price falls `stop` (fraction) below entry. Fill
+    at the stop price, at the open when the bar gapped below it, or at the
+    close on close-only data.
+
+    Target (target_mult > 0): exit once the bar HIGH touches
+    entry + target_mult × ATR(14 ending at the entry bar) — a resting limit
+    order. Fill at the target, at the open when the bar gapped above it, or at
+    the close on close-only data (where the close itself must reach the target).
+
+    Same-bar priority: the stop is checked FIRST — when both could have fired
+    intrabar we never assume the favourable path. After any forced exit the
+    position stays flat until the underlying signal resets (goes flat, then
+    fires again), so a forced-out trade is not re-entered on the very next bar.
     """
     result = list(effective)
     fills: dict[int, float] = {}
     entry_price: float | None = None
+    target_price: float | None = None
     suppressed = False
     for index in range(len(result)):
         if not result[index]:
             suppressed = False  # strategy flat → clear suppression, no open trade
             entry_price = None
+            target_price = None
             continue
         if suppressed:
-            result[index] = False  # stopped out earlier; remain flat
+            result[index] = False  # forced out earlier; remain flat
             continue
         if entry_price is None:
-            entry_price = closes[index]  # entry bar — no stop check yet
+            entry_price = closes[index]  # entry bar — no exit checks yet
+            target_price = None
+            if target_mult > 0:
+                atr = _entry_atr(closes, highs, lows, index)
+                if atr > 0:
+                    target_price = entry_price + target_mult * atr
             continue
-        stop_price = entry_price * (1.0 - stop)
-        low_known = lows is not None and lows[index] is not None
-        low = lows[index] if low_known else closes[index]
-        if low <= stop_price:
-            result[index] = False  # stop hit → exit this bar
-            if not low_known:
-                fill = closes[index]  # close-only data: close is the only price
-            else:
-                bar_open = opens[index] if (opens is not None and opens[index] is not None) else None
-                if bar_open is not None and bar_open < stop_price:
+
+        bar_open = opens[index] if (opens is not None and opens[index] is not None) else None
+
+        # 1. Stop-loss first (conservative same-bar priority).
+        if stop > 0:
+            stop_price = entry_price * (1.0 - stop)
+            low_known = lows is not None and lows[index] is not None
+            low = lows[index] if low_known else closes[index]
+            if low <= stop_price:
+                result[index] = False
+                if not low_known:
+                    fill = closes[index]  # close-only data: close is the only price
+                elif bar_open is not None and bar_open < stop_price:
                     fill = bar_open  # gapped through the stop → filled at the open
                 else:
                     fill = stop_price
-            fills[index] = fill
-            suppressed = True
-            entry_price = None
+                fills[index] = fill
+                suppressed = True
+                entry_price = None
+                target_price = None
+                continue
+
+        # 2. Profit target.
+        if target_price is not None:
+            high_known = highs is not None and highs[index] is not None
+            high = highs[index] if high_known else closes[index]
+            if high >= target_price:
+                result[index] = False
+                if not high_known:
+                    fill = closes[index]  # close-only: the close reached the target
+                elif bar_open is not None and bar_open > target_price:
+                    fill = bar_open  # gapped above the target → filled at the open
+                else:
+                    fill = target_price
+                fills[index] = fill
+                suppressed = True
+                entry_price = None
+                target_price = None
     return result, fills
 
 

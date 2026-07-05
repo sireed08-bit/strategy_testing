@@ -152,6 +152,46 @@ def test_scoring_weights_sum_to_one_and_include_excess_return() -> None:
     assert "excess_return_pct" in criteria["metric_targets"]
 
 
+def test_profit_target_fills_at_target_not_higher_close() -> None:
+    # Flat tape (ATR from close changes = 1.0 via lows/highs), entry at 100.
+    # Target = 100 + 3*ATR. Bar 17's high touches the target intraday but the
+    # close finishes above it — a resting limit order fills AT the target.
+    closes = [100.0 + (i % 2) for i in range(16)] + [100.0, 106.0]
+    highs = [c + 0.5 for c in closes[:-1]] + [107.0]
+    lows = [c - 0.5 for c in closes]
+    signals = [True] * len(closes)
+    _, _, trades = simulate_long_only(
+        closes, signals, cost_bps=0.0, profit_target_atr=3.0, highs=highs, lows=lows
+    )
+    assert len(trades) == 1
+    # Entry at closes[1]; ATR(14 at entry) derives from the alternating tape.
+    # The trade's net return must correspond to a fill BELOW the 106 close.
+    assert 0 < trades[0] < (106.0 / closes[1] - 1.0)
+
+
+def test_profit_target_absent_is_a_noop() -> None:
+    closes = [100.0, 101.0, 99.0, 102.0, 104.0, 103.0]
+    signals = [True] * len(closes)
+    plain = simulate_long_only(closes, signals, cost_bps=5.0)
+    with_zero = simulate_long_only(closes, signals, cost_bps=5.0, profit_target_atr=0.0)
+    assert plain == with_zero
+
+
+def test_stop_beats_target_on_the_same_bar() -> None:
+    # Bar 16 has a huge range: low breaches the stop AND high touches the target.
+    # Conservative same-bar priority: the stop must win.
+    closes = [100.0 + (i % 2) for i in range(16)] + [100.0]
+    highs = [c + 0.5 for c in closes[:-1]] + [130.0]
+    lows = [c - 0.5 for c in closes[:-1]] + [80.0]
+    signals = [True] * len(closes)
+    _, _, trades = simulate_long_only(
+        closes, signals, cost_bps=0.0,
+        stop_loss_pct=10.0, profit_target_atr=3.0, highs=highs, lows=lows,
+    )
+    assert len(trades) == 1
+    assert trades[0] < 0  # stopped out, not target-filled
+
+
 def test_vol_target_zero_is_an_exact_noop() -> None:
     """Absent/zero vol_target must reproduce the unsized simulation bit-for-bit
     — existing fingerprints and results stay valid without a rebuild."""

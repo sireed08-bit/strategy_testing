@@ -40,6 +40,10 @@ PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "entry_rsi": (1, 99),
     "exit_rsi": (1, 99),
     "vol_target_pct": (5, 40),
+    "profit_target_atr": (0.5, 10),
+    "entry_percentile": (1, 99),
+    "exit_percentile": (1, 99),
+    "weekday": (0, 4),
 }
 
 # At most this many seeds per strategy family within one symbol. Without a cap,
