@@ -73,6 +73,12 @@ def rows_from_chart_payload(symbol: str, payload: dict[str, Any]) -> list[dict[s
     return rows
 
 
+_FIELDNAMES = [
+    "date", "symbol", "open", "high", "low", "close",
+    "volume", "trade_count", "vwap", "feed",
+]
+
+
 def download_deep_history_csv(
     *,
     symbols: list[str],
@@ -80,27 +86,41 @@ def download_deep_history_csv(
     end: str,
     output_path: Path,
     pause_seconds: float = 1.0,
+    append_new_only: bool = False,
 ) -> int:
-    """Fetch adjusted daily history for each symbol and write the standard CSV."""
+    """
+    Fetch adjusted daily history and write the standard CSV.
+
+    append_new_only=True preserves EXISTING symbols' rows byte-for-byte and
+    fetches only symbols not already in the file. This matters because Yahoo
+    recomputes dividend-adjusted history continuously — re-downloading an
+    existing symbol would silently change its historical closes underneath
+    fingerprints that were computed on the old series. Existing data only
+    changes through a deliberate re-download with a vintage advance.
+    """
+    existing_rows: list[dict[str, Any]] = []
+    existing_symbols: set[str] = set()
+    if append_new_only and output_path.exists():
+        with output_path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                existing_rows.append(row)
+                existing_symbols.add(row["symbol"])
+
+    to_fetch = [s for s in symbols if s not in existing_symbols]
     start_epoch = int(datetime.fromisoformat(start).replace(tzinfo=timezone.utc).timestamp())
     end_epoch = int(datetime.fromisoformat(end).replace(tzinfo=timezone.utc).timestamp())
 
-    all_rows: list[dict[str, Any]] = []
-    for index, symbol in enumerate(symbols):
+    new_rows: list[dict[str, Any]] = []
+    for index, symbol in enumerate(to_fetch):
         payload = fetch_chart_payload(symbol, start_epoch, end_epoch)
-        all_rows.extend(rows_from_chart_payload(symbol, payload))
-        if index < len(symbols) - 1:
+        new_rows.extend(rows_from_chart_payload(symbol, payload))
+        if index < len(to_fetch) - 1:
             time.sleep(pause_seconds)  # be a polite guest on an unofficial API
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "date", "symbol", "open", "high", "low", "close",
-                "volume", "trade_count", "vwap", "feed",
-            ],
-        )
+        writer = csv.DictWriter(handle, fieldnames=_FIELDNAMES)
         writer.writeheader()
-        writer.writerows(all_rows)
-    return len(all_rows)
+        writer.writerows(existing_rows)
+        writer.writerows(new_rows)
+    return len(existing_rows) + len(new_rows)

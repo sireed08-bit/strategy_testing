@@ -40,6 +40,37 @@ def test_rows_apply_dividend_split_adjustment_to_ohlc() -> None:
     assert first["low"] <= first["close"] <= first["high"]
 
 
+def test_append_new_only_preserves_existing_rows_byte_for_byte(tmp_path, monkeypatch) -> None:
+    """Yahoo recomputes adjusted history continuously; existing symbols must
+    never be silently re-fetched under old fingerprints."""
+    import strategy_lab.yahoo_data as ydata
+
+    out = tmp_path / "deep.csv"
+    fetched = []
+
+    def _fake_fetch(symbol, start_epoch, end_epoch):
+        fetched.append(symbol)
+        return _payload()
+
+    monkeypatch.setattr(ydata, "fetch_chart_payload", _fake_fetch)
+    ydata.download_deep_history_csv(
+        symbols=["SPY"], start="2005-01-01", end="2005-02-01", output_path=out
+    )
+    original = out.read_text(encoding="utf-8")
+    assert fetched == ["SPY"]
+
+    # Second call adds AAPL; SPY must NOT be re-fetched and its rows unchanged.
+    ydata.download_deep_history_csv(
+        symbols=["SPY", "AAPL"], start="2005-01-01", end="2005-02-01",
+        output_path=out, append_new_only=True,
+    )
+    assert fetched == ["SPY", "AAPL"]
+    combined = out.read_text(encoding="utf-8")
+    assert combined.startswith(original.rstrip("\n").split("\n")[0] + "\n")  # header
+    for line in original.strip().split("\n")[1:]:
+        assert line in combined  # every original SPY row survived verbatim
+
+
 def test_rows_skip_bars_missing_close_or_adjclose() -> None:
     payload = _payload()
     payload["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"][1] = None

@@ -115,6 +115,15 @@ if (Test-Path $expLog) {
     }
 }
 
+# -- 5. vintage age (informational nudge, not an alarm) ---------------------------
+$vintageFile = Join-Path $dataDir "experiments\dataset_vintage.json"
+if (Test-Path $vintageFile) {
+    $vintageAge = ((Get-Date) - (Get-Item $vintageFile).LastWriteTime).TotalDays
+    if ($vintageAge -gt 100) {
+        Write-Log "INFO: dataset vintages are $([math]::Round($vintageAge,0)) days old - consider POST /advance-vintage (quarterly cadence; rotates fingerprints deliberately)."
+    }
+}
+
 # -- report ----------------------------------------------------------------------
 if ($problems.Count -gt 0) {
     Send-Alarm "Strategy Lab watchdog: $($problems.Count) problem(s)" ($problems -join "`n")

@@ -112,7 +112,8 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            {"name": "limit", "value": "200"}
+            {"name": "limit", "value": "200"},
+            {"name": "dataset", "value": "deep"}
           ]
         },
         "options": {"timeout": 5400000}
@@ -122,7 +123,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [1120, 460],
-      "notes": "Creeping fill of the strategy grid across 12 liquid single names — the hunting ground the index ETFs are not."
+      "notes": "Creeping fill of the strategy grid across 12 liquid single names on 2005+ dividend-adjusted history — regime-tested from day one, never judged on a single era."
     },
     {
       "parameters": {

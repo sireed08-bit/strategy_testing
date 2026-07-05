@@ -404,18 +404,19 @@ def champions(limit: int = 10) -> dict:
 # ── scanner-universe backtesting ──────────────────────────────────────────────
 
 @app.post("/run-scanner-batch")
-def run_scanner_batch(symbols: str = "", limit: int = 400) -> dict:
+def run_scanner_batch(symbols: str = "", limit: int = 400, dataset: str = "scanner") -> dict:
     """
-    Run the strategy grid on single names from the scanner universe — where
-    dispersion and inefficiency actually live, unlike the arbitraged-flat index
-    ETFs. Default subset: liquid mega-caps + two sector ETFs. Scanner history
-    starts 2022, so expect thinner OOS windows; the same validation machinery
-    applies unchanged.
+    Run the strategy grid on single names — where dispersion and inefficiency
+    actually live, unlike the arbitraged-flat index ETFs.
+
+    dataset=deep (preferred for verdicts): 2005+ dividend-adjusted Yahoo
+    history — single names judged across every regime, not one era.
+    dataset=scanner: the 2022+ Alpaca cross-section (fast, recent, split-only).
     """
     default_subset = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,JPM,XOM,UNH,XLE,XLF"
     picked = [s.strip().upper() for s in (symbols or default_subset).split(",") if s.strip()]
-    csv = _select_csv("scanner")
-    end_cap = _vintage_end("scanner")
+    csv = _select_csv(dataset)
+    end_cap = _vintage_end(dataset)
     date_str = datetime.now(timezone.utc).date().isoformat()
     results = []
     with _batch_write_lock():
@@ -445,6 +446,80 @@ def run_scanner_batch(symbols: str = "", limit: int = 400) -> dict:
         priority="default",
     )
     return {"runs": results, "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+# ── defenders (crisis-alpha designation + blend analysis) ─────────────────────
+
+@app.get("/defenders")
+def defenders(limit: int = 12) -> dict:
+    """
+    The designation for what this lab verifiably finds: strategies that give up
+    bull-market upside to sidestep crashes. Bar: OOS-evaluated (score >= 45),
+    max drawdown <= half the benchmark's, positive excess in >= 2/3 of the
+    benchmark's down years (min 2 observed). Includes the allocator's question:
+    does 50% defender + 50% buy-and-hold beat pure buy-and-hold on Sharpe?
+    """
+    from strategy_lab.analysis import top_robust_records
+    from strategy_lab.batch_runner import trim_final_exam
+    from strategy_lab.defenders import evaluate_defender
+    from strategy_lab.models import StrategySpec
+
+    stem_to_dataset = {"alpaca_iex_etfs": "default", "yahoo_deep_etfs": "deep",
+                       _SCANNER_CSV_NAME.replace(".csv", ""): "scanner"}
+    records = ExperimentLog(_EXPERIMENT_LOG).records()
+    bars_cache: dict = {}
+    results = []
+    for record in top_robust_records(records, limit=limit):
+        s = record["strategy"]
+        if s["name"] in {"regime_switch_pair", "relative_momentum_rotation", "bond_low_risk_off"}:
+            continue  # portfolio strategies need their own defender path
+        dataset_key = stem_to_dataset.get(record["dataset"].get("name"))
+        if dataset_key is None:
+            continue
+        symbol = (record["dataset"]["symbols"] or ["?"])[0]
+        cache_key = (dataset_key, symbol)
+        if cache_key not in bars_cache:
+            try:
+                bars, _ = load_price_bars_from_csv(
+                    _select_csv(dataset_key), symbol, end_cap=_vintage_end(dataset_key)
+                )
+                bars_cache[cache_key] = trim_final_exam(bars)
+            except Exception:
+                bars_cache[cache_key] = None
+        if not bars_cache[cache_key]:
+            continue
+        spec = StrategySpec(
+            family=s["family"], name=s["name"],
+            hypothesis=s.get("hypothesis", ""), rules=s.get("rules", {}),
+            parameters=s["parameters"], risk_model=s.get("risk_model", {}),
+        )
+        assessment = evaluate_defender(spec, bars_cache[cache_key], record)
+        results.append({
+            "strategy": s["name"],
+            "symbol": symbol,
+            "dataset": dataset_key,
+            "score": record["score"],
+            "excess_return_pct": record["metrics"].get("excess_return_pct"),
+            "parameters": s["parameters"],
+            "risk_model": s.get("risk_model", {}),
+            **assessment,
+        })
+    qualified = [r for r in results if r["qualified"]]
+    if qualified:
+        _notify(
+            title=f"Strategy Lab — {len(qualified)} validated defender(s)",
+            message="\n".join(
+                f"{d['strategy']}/{d['symbol']} ({d['dataset']}) dd {d['strategy_dd_pct']}% vs bench {d['benchmark_dd_pct']}%, "
+                f"down-years {d['down_years']}, blend-Sharpe-improves={d.get('blend_improves_sharpe')}"
+                for d in qualified[:5]
+            ),
+            priority="default",
+        )
+    return {
+        "defenders": qualified,
+        "reviewed": results,
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # ── per-year regime breakdown ─────────────────────────────────────────────────
@@ -756,6 +831,65 @@ def journal() -> dict:
     return report
 
 
+# ── journal drift (is live tracking the backtest?) ────────────────────────────
+
+@app.get("/journal-drift")
+def journal_drift(min_trades: int = 5) -> dict:
+    """
+    Compare each journalled stream's REALIZED forward results against the
+    matching experiment record's backtest expectation (win rate). Large drift
+    with enough trades means the live behaviour doesn't match what was tested —
+    the earliest warning that a backtest was fit to conditions that ended.
+    Thin streams are reported but not judged.
+    """
+    from strategy_lab.signal_journal import evaluate_journal, strategy_key
+
+    csv = _data_csv()
+
+    def _load(symbol: str):
+        try:
+            bars, _ = load_price_bars_from_csv(csv, symbol)
+            return bars
+        except ValueError:
+            bars, _ = load_price_bars_from_csv(_scanner_csv(), symbol)
+            return bars
+
+    journal = evaluate_journal(_SIGNAL_JOURNAL, _load)
+    records = ExperimentLog(_EXPERIMENT_LOG).records()
+    by_key: dict = {}
+    for record in records:
+        key = strategy_key(record["strategy"])
+        by_key.setdefault((key, (record["dataset"]["symbols"] or ["?"])[0]), record)
+
+    streams = []
+    for stream in journal.get("streams", []):
+        if stream.get("status") == "no_price_data":
+            continue
+        expected = by_key.get((stream["key"], stream["symbol"]))
+        entry = {
+            "strategy": stream.get("strategy"),
+            "symbol": stream["symbol"],
+            "journal_days": stream["journal_days"],
+            "closed_trades": stream["closed_trades"],
+            "realized_win_rate_pct": stream.get("win_rate_pct"),
+            "expected_win_rate_pct": (expected or {}).get("metrics", {}).get("win_rate_pct"),
+            "verdict": "insufficient_trades",
+        }
+        if stream["closed_trades"] >= min_trades and entry["expected_win_rate_pct"] is not None:
+            gap = abs((entry["realized_win_rate_pct"] or 0) - entry["expected_win_rate_pct"])
+            entry["win_rate_gap"] = round(gap, 1)
+            entry["verdict"] = "drifting" if gap > 25 else "tracking"
+        streams.append(entry)
+    drifting = [s for s in streams if s["verdict"] == "drifting"]
+    if drifting:
+        _notify(
+            title=f"Strategy Lab — {len(drifting)} stream(s) drifting from backtest",
+            message="\n".join(f"{d['strategy']}/{d['symbol']} gap={d['win_rate_gap']}pts" for d in drifting[:5]),
+            priority="high",
+        )
+    return {"streams": streams, "as_of": datetime.now(timezone.utc).isoformat()}
+
+
 # ── run single symbol ─────────────────────────────────────────────────────────
 
 class BatchRequest(BaseModel):
@@ -975,17 +1109,25 @@ def _portfolio_csv() -> Path:
 
 
 @app.post("/refresh-portfolio-data")
-def refresh_portfolio_data(start: str = "2020-01-01") -> dict:
-    """Download bars for the multi-symbol universe (equities + bonds + gold)."""
+def refresh_portfolio_data(start: str = "2005-01-01", append: bool = True) -> dict:
+    """
+    Download the multi-symbol universe (equities + bonds + gold) from Yahoo:
+    2005+ WITH dividends. Both properties are essential here — the risk-off
+    families' entire reason to exist is 2008, and bond returns are mostly
+    distributions (price-only TLT understates it by 3-4%/yr, which would
+    grossly distort every switch strategy's value). Append-preserving like the
+    deep refresh: existing symbols' rows are never silently rewritten.
+    """
+    from strategy_lab.yahoo_data import download_deep_history_csv
+
     output = _private_storage() / "data" / "market_data" / _PORTFOLIO_CSV_NAME
     end = datetime.now(timezone.utc).date().isoformat()
     try:
-        creds = credentials_from_env()
-        rows = download_stock_bars_csv(
+        rows = download_deep_history_csv(
             symbols=_PORTFOLIO_SYMBOLS, start=start, end=end,
-            output_path=output, credentials=creds,
+            output_path=output, append_new_only=append,
         )
-        return {"status": "ok", "rows_written": rows, "path": str(output)}
+        return {"status": "ok", "rows_total": rows, "path": str(output), "source": "yahoo_adj"}
     except Exception as exc:
         raise HTTPException(502, f"Portfolio data download failed: {exc}")
 
@@ -1076,22 +1218,28 @@ def run_portfolio() -> dict:
 # ── deep history (Yahoo, 2005+) ───────────────────────────────────────────────
 
 @app.post("/refresh-deep-data")
-def refresh_deep_data(start: str = "2005-01-01") -> dict:
+def refresh_deep_data(start: str = "2005-01-01", symbols: str = "", append: bool = True) -> dict:
     """
-    Download two decades of adjusted daily bars for the backtest ETFs from
-    Yahoo's chart API. Infrequent bulk pull (quarterly at most) — the daily
-    Alpaca pipeline is unaffected if Yahoo ever breaks. Run deep batches with
-    /run-all?dataset=deep — a separate dataset with separate fingerprints.
+    Download two decades of adjusted daily bars from Yahoo's chart API.
+    Default mode appends NEW symbols only, preserving existing rows byte-for-
+    byte (Yahoo recomputes adjusted history continuously — re-downloading an
+    existing symbol would silently change data under old fingerprints; do that
+    only deliberately with append=false + /advance-vintage).
     """
     from strategy_lab.yahoo_data import download_deep_history_csv
 
     output = _private_storage() / "data" / "market_data" / "yahoo_deep_etfs.csv"
     end = datetime.now(timezone.utc).date().isoformat()
+    wanted = [s.strip().upper() for s in symbols.split(",") if s.strip()] or _SYMBOLS
     try:
         rows = download_deep_history_csv(
-            symbols=_SYMBOLS, start=start, end=end, output_path=output,
+            symbols=wanted, start=start, end=end, output_path=output,
+            append_new_only=append,
         )
-        return {"status": "ok", "rows_written": rows, "path": str(output), "start": start, "end": end}
+        return {
+            "status": "ok", "rows_total": rows, "path": str(output),
+            "symbols_requested": wanted, "append_new_only": append,
+        }
     except Exception as exc:
         raise HTTPException(502, f"Deep history download failed: {exc}")
 
