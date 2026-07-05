@@ -63,7 +63,16 @@ if (-not $healthy) {
 }
 
 # ── 2. research-run freshness ─────────────────────────────────────────────────
-$runLog = Join-Path $root "data\runs\research_runs.jsonl"
+# Honor STRATEGY_DATA_DIR (hot data relocated out of OneDrive after sync-race
+# corruption); fall back to the in-repo path.
+$dataDir = $null
+if (Test-Path $envFile) {
+    foreach ($line in Get-Content $envFile) {
+        if ($line -match '^﻿?STRATEGY_DATA_DIR\s*=\s*(.+)$') { $dataDir = $Matches[1].Trim(); break }
+    }
+}
+if (-not $dataDir) { $dataDir = Join-Path $root "data" }
+$runLog = Join-Path $dataDir "runs\research_runs.jsonl"
 if (Test-Path $runLog) {
     $lastLine = Get-Content $runLog -Tail 1
     $lastRun = $null

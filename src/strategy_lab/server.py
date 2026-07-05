@@ -47,12 +47,20 @@ from strategy_lab.run_ledger import ResearchRunLedger
 
 # ── project layout ────────────────────────────────────────────────────────────
 _ROOT = Path(__file__).resolve().parents[2]
-_EXPERIMENT_LOG = _ROOT / "data" / "experiments" / "experiment_log.jsonl"
-_RUN_LOG = _ROOT / "data" / "runs" / "research_runs.jsonl"
+
+# High-frequency append files (experiment log, index, run ledger, journal, lock)
+# must NOT live inside a OneDrive-synced folder: the sync engine racing a file
+# that takes thousands of appends per hour corrupted the log mid-file twice
+# (2026-06-29 and 2026-07-04, 58 mangled records). STRATEGY_DATA_DIR points the
+# hot state at a local, unsynced directory; the repo (code, configs, reports)
+# can stay in OneDrive because those files change rarely.
+_DATA_ROOT = Path(os.environ.get("STRATEGY_DATA_DIR", "").strip() or (_ROOT / "data"))
+_EXPERIMENT_LOG = _DATA_ROOT / "experiments" / "experiment_log.jsonl"
+_RUN_LOG = _DATA_ROOT / "runs" / "research_runs.jsonl"
 _REPORT = _ROOT / "reports" / "latest.md"
 _SYMBOLS = ["SPY", "QQQ", "IWM", "DIA"]
 _SCANNER_CSV_NAME = "scanner_universe_bars.csv"
-_SIGNAL_JOURNAL = _ROOT / "data" / "signals" / "signal_journal.jsonl"
+_SIGNAL_JOURNAL = _DATA_ROOT / "signals" / "signal_journal.jsonl"
 
 
 def _env(key: str, default: str = "") -> str:
@@ -66,7 +74,7 @@ def _env(key: str, default: str = "") -> str:
 # or >2h old) is reclaimed so a crash can't deadlock future runs.
 import contextlib
 
-_BATCH_LOCK = Path(__file__).resolve().parents[2] / "data" / "experiments" / ".batch.lock"
+_BATCH_LOCK = _DATA_ROOT / "experiments" / ".batch.lock"
 _STALE_LOCK_SECONDS = 2 * 60 * 60
 
 
@@ -146,7 +154,7 @@ def _select_csv(dataset: str) -> Path:
     raise HTTPException(400, f"Unknown dataset '{dataset}'. Use 'default', 'deep' or 'scanner'.")
 
 
-_VINTAGE_FILE = _ROOT / "data" / "experiments" / "dataset_vintage.json"
+_VINTAGE_FILE = _DATA_ROOT / "experiments" / "dataset_vintage.json"
 
 
 def _vintage_end(dataset: str) -> str:
