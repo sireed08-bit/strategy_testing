@@ -29,6 +29,25 @@ def test_annotate_stability_blends_neighbor_scores() -> None:
     assert spike["stability_score"] < spike["score"]
 
 
+def test_annotate_stability_handles_list_parameters() -> None:
+    """Portfolio records carry symbols=[...] lists — must not crash the
+    hashing/dedup machinery (regression: TypeError unhashable type list)."""
+    portfolio = {
+        "strategy": {
+            "name": "relative_momentum_rotation",
+            "parameters": {"symbols": ["SPY", "QQQ"], "lookback": 63},
+            "risk_model": {},
+        },
+        "dataset": {"symbols": ["QQQ", "SPY"]},
+        "score": 50.0,
+        "grade": "watch",
+        "fingerprint": "fp-x",
+    }
+    plain = _record({"entry_rsi": 30}, 60.0)
+    annotated = annotate_stability([portfolio, plain])
+    assert len(annotated) == 2  # no crash, both records annotated
+
+
 def test_top_robust_records_prefers_supported_plateau_over_spike() -> None:
     records = [
         _record({"entry_rsi": 30}, 70.0),

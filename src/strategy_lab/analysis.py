@@ -16,9 +16,15 @@ from typing import Any
 
 
 def _combined_params(record: dict) -> dict[str, Any]:
-    """Tunable vector = strategy parameters + risk_model (e.g. max_hold_days)."""
+    """Tunable vector = strategy parameters + risk_model (e.g. max_hold_days).
+    List values (portfolio symbol sets) become tuples so every value is
+    hashable — set/dedup machinery must handle multi-symbol records."""
     strategy = record["strategy"]
-    return {**strategy.get("parameters", {}), **strategy.get("risk_model", {})}
+    merged = {**strategy.get("parameters", {}), **strategy.get("risk_model", {})}
+    return {
+        key: tuple(value) if isinstance(value, list) else value
+        for key, value in merged.items()
+    }
 
 
 def _symbol(record: dict) -> str:
