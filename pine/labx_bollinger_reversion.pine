@@ -1,0 +1,30 @@
+//@version=6
+strategy("LabX Bollinger Reversion", overlay=true, initial_capital=100000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     process_orders_on_close=true, calc_on_every_tick=false)
+
+window = input.int(20, "Window")
+numStd = input.float(2.0, "Std Devs")
+maxHold = input.int(20, "Max Hold Bars")
+
+basis = ta.sma(close, window)
+dev = numStd * ta.stdev(close, window)
+lower = basis - dev
+upper = basis + dev
+
+wasBelow = close[1] < lower[1]
+snapBack = wasBelow and close > lower
+
+var int barsHeld = 0
+if strategy.position_size > 0
+    barsHeld += 1
+else
+    barsHeld := 0
+
+if snapBack and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+
+exitCond = close >= upper or barsHeld >= maxHold
+if strategy.position_size > 0 and exitCond
+    strategy.close("Long")
