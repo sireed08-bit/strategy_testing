@@ -247,6 +247,72 @@ def test_yearly_breakdown_splits_strategy_and_benchmark_by_year() -> None:
     assert abs(rows[1]["excess_pct"]) < 1.0
 
 
+def test_bollinger_reversion_enters_on_snap_back_not_falling_knife() -> None:
+    from strategy_lab.backtest import build_signals
+
+    # Price crashes below the lower band and STAYS below — no entry while
+    # falling. Only the close that crosses back above the lower band enters.
+    closes = [100.0] * 20 + [80.0, 78.0, 76.0, 88.0, 92.0]
+    spec = StrategySpec(
+        family="mean_reversion", name="bollinger_reversion", hypothesis="", rules={},
+        parameters={"window": 20, "num_std": 2.0}, risk_model={},
+    )
+    signals = build_signals(spec, closes)
+    assert signals[20] is False and signals[21] is False and signals[22] is False
+    assert signals[23] is True  # 88 closes back above the (crash-widened) lower band
+
+
+def test_percent_rank_momentum_enters_at_high_rank() -> None:
+    from strategy_lab.backtest import build_signals
+
+    closes = [float(100 + i) for i in range(20)] + [125.0, 90.0]
+    spec = StrategySpec(
+        family="momentum", name="percent_rank_momentum", hypothesis="", rules={},
+        parameters={"lookback": 20, "entry_percentile": 80, "exit_percentile": 30},
+        risk_model={},
+    )
+    signals = build_signals(spec, closes)
+    assert signals[20] is True   # 125 ranks above 100% of the trailing window
+    assert signals[21] is False  # 90 ranks at 0% → exit
+
+
+def test_day_of_week_momentum_only_enters_on_configured_weekday() -> None:
+    from strategy_lab.backtest import build_signals_from_bars
+    from datetime import date, timedelta
+
+    start = date(2026, 1, 5)  # a Monday
+    bars = []
+    for day in range(300):
+        d = start + timedelta(days=day)
+        if d.weekday() > 4:
+            continue  # trading days only
+        bars.append(PriceBar(date=d.isoformat(), symbol="QQQ", close=100.0 + len(bars) * 0.5))
+    spec = StrategySpec(
+        family="calendar", name="day_of_week_momentum", hypothesis="", rules={},
+        parameters={"weekday": 3, "momentum_lookback": 100},  # Thursdays
+        risk_model={"max_hold_days": 2},
+    )
+    signals = build_signals_from_bars(spec, bars)
+    # Every ENTRY bar (False -> True transition) must be a Thursday.
+    for i in range(1, len(bars)):
+        if signals[i] and not signals[i - 1]:
+            assert date.fromisoformat(bars[i].date).weekday() == 3
+
+
+def test_dual_momentum_band_requires_all_three_conditions() -> None:
+    from strategy_lab.backtest import build_signals
+
+    # Monotonic uptrend: long-term momentum is UP, so the long_down condition
+    # fails everywhere — never a single entry.
+    closes = [100.0 + i for i in range(260)]
+    spec = StrategySpec(
+        family="mean_reversion", name="dual_momentum_band", hypothesis="", rules={},
+        parameters={"long_lookback": 200, "fast_lookback": 10, "slow_lookback": 40},
+        risk_model={"max_hold_days": 21},
+    )
+    assert not any(build_signals(spec, closes))
+
+
 def test_run_backtest_rejects_unimplemented_strategy() -> None:
     strategy = StrategySpec(
         family="test",

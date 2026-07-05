@@ -130,3 +130,57 @@ strategies:
       max_hold_days: [2, 3, 5]
       stop_loss_pct: [5, 8]
       vol_target_pct: [15]
+
+  # ── families mined from the YouTube-transcript strategy catalog ──────────────
+  - family: mean_reversion
+    name: bollinger_reversion
+    hypothesis: A close snapping back above the lower Bollinger band marks a mean-reversion entry; exit at the upper band. (YT catalog / Kevin Davey, long-only translation.)
+    rules:
+      entry: close crosses from below the lower band back above it
+      exit: close reaches the upper band, or max_hold_days
+    parameter_grid:
+      window: [15, 20, 25]
+      num_std: [1.5, 2.0, 2.5]
+    # Paired with the profit-target lever per Davey's exit study (targets beat stops).
+    risk_grid:
+      max_hold_days: [10, 20]
+      profit_target_atr: [3]
+
+  - family: momentum
+    name: percent_rank_momentum
+    hypothesis: A close ranking in the top decile-ish of its trailing window signals strength that persists. (YT catalog "Rolling Window Strength Bias".)
+    rules:
+      entry: close percent-rank over the trailing window >= entry_percentile
+      exit: percent-rank <= exit_percentile, or max_hold_days
+    parameter_grid:
+      lookback: [20, 50, 100]
+      entry_percentile: [70, 80, 90]
+      exit_percentile: [20, 30, 50]
+    risk_grid:
+      max_hold_days: [5, 10, 20]
+
+  - family: calendar
+    name: day_of_week_momentum
+    hypothesis: Specific weekdays carry exploitable drift when long-term momentum agrees. (YT catalog / Davey NQ day-of-week, daily translation.)
+    rules:
+      entry: it is the configured weekday AND close > close[momentum_lookback]
+      exit: max_hold_days elapsed or momentum condition dies
+    parameter_grid:
+      weekday: [0, 1, 2, 3, 4]
+      momentum_lookback: [100, 200]
+    risk_grid:
+      max_hold_days: [3, 5]
+
+  - family: mean_reversion
+    name: dual_momentum_band
+    hypothesis: Within a long-term decline, a fast-lookback upturn against a still-falling slow lookback marks a rebound entry. (YT catalog / Davey's recurring momentum entry structure.)
+    rules:
+      entry: close < close[long_lookback] AND close > close[fast_lookback] AND close < close[slow_lookback]
+      exit: long-term downtrend condition dies, max_hold_days, or the profit target
+    parameter_grid:
+      long_lookback: [200]
+      fast_lookback: [5, 10, 20]
+      slow_lookback: [40, 60]
+    risk_grid:
+      max_hold_days: [10, 21]
+      profit_target_atr: [2, 3]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date as _date
 from math import sqrt
 from statistics import mean, pstdev
 
@@ -250,6 +251,33 @@ def build_signals_from_bars(strategy: StrategySpec, bars: list[PriceBar]) -> lis
             signals.append(in_position)
         return signals
 
+    if strategy.name == "day_of_week_momentum":
+        # From the YT mined-strategy catalog (Kevin Davey's NQ day-of-week
+        # momentum): enter on a specific weekday only when long momentum is up.
+        # Original exits were opposite-signal + catastrophic stop; the daily
+        # translation exits on max_hold or when the momentum condition dies.
+        weekday = int(strategy.parameters["weekday"])  # 0=Mon .. 4=Fri
+        lookback = int(strategy.parameters["momentum_lookback"])
+        max_hold = int(strategy.risk_model.get("max_hold_days", 5))
+        dow_signals: list[bool] = []
+        in_position = False
+        days_held = 0
+        for index in range(len(bars)):
+            if index < lookback:
+                dow_signals.append(False)
+                continue
+            momentum_up = closes[index] > closes[index - lookback]
+            if in_position:
+                days_held += 1
+                if (max_hold > 0 and days_held >= max_hold) or not momentum_up:
+                    in_position = False
+                    days_held = 0
+            elif momentum_up and _date.fromisoformat(bars[index].date).weekday() == weekday:
+                in_position = True
+                days_held = 0
+            dow_signals.append(in_position)
+        return dow_signals
+
     if strategy.name == "gap_momentum":
         # From gap_pct (positive IC: up-gaps show short-term continuation).
         opens = [bar.open for bar in bars]
@@ -316,6 +344,100 @@ def build_signals(strategy: StrategySpec, closes: list[float]) -> list[bool]:
                     days_held = 0
             rsi_signals.append(in_position)
         return rsi_signals
+
+    if strategy.name == "bollinger_reversion":
+        # YT catalog (Davey, long-only translation): enter when the close
+        # crosses back ABOVE the lower Bollinger band (was below, now above —
+        # the snap-back, not the falling knife); exit at the upper band.
+        window = int(strategy.parameters["window"])
+        num_std = float(strategy.parameters["num_std"])
+        max_hold = int(strategy.risk_model.get("max_hold_days", 0))
+        bb_signals: list[bool] = []
+        in_position = False
+        days_held = 0
+        prev_below_lower = False
+        for index in range(len(closes)):
+            if index + 1 < window:
+                bb_signals.append(False)
+                continue
+            sample = closes[index + 1 - window : index + 1]
+            mid = sum(sample) / window
+            sd = pstdev(sample)
+            lower = mid - num_std * sd
+            upper = mid + num_std * sd
+            if in_position:
+                days_held += 1
+                forced = max_hold > 0 and days_held >= max_hold
+                if closes[index] >= upper or forced:
+                    in_position = False
+                    days_held = 0
+            elif prev_below_lower and closes[index] > lower:
+                in_position = True
+                days_held = 0
+            prev_below_lower = closes[index] < lower
+            bb_signals.append(in_position)
+        return bb_signals
+
+    if strategy.name == "percent_rank_momentum":
+        # YT catalog ("Rolling Window Strength Bias", ChatGPT via Davey): long
+        # when today's close ranks above entry_percentile of the trailing
+        # window; exit when it sinks below exit_percentile.
+        lookback = int(strategy.parameters["lookback"])
+        entry_pctl = float(strategy.parameters["entry_percentile"])
+        exit_pctl = float(strategy.parameters["exit_percentile"])
+        max_hold = int(strategy.risk_model.get("max_hold_days", 0))
+        pr_signals: list[bool] = []
+        in_position = False
+        days_held = 0
+        for index in range(len(closes)):
+            if index < lookback:
+                pr_signals.append(False)
+                continue
+            past = closes[index - lookback : index]
+            rank_pct = 100.0 * sum(1 for value in past if value < closes[index]) / lookback
+            if in_position:
+                days_held += 1
+                forced = max_hold > 0 and days_held >= max_hold
+                if rank_pct <= exit_pctl or forced:
+                    in_position = False
+                    days_held = 0
+            elif rank_pct >= entry_pctl:
+                in_position = True
+                days_held = 0
+            pr_signals.append(in_position)
+        return pr_signals
+
+    if strategy.name == "dual_momentum_band":
+        # YT catalog (Davey's recurring momentum entry): long when long-term
+        # momentum is DOWN but the fast lookback has turned up while the slow
+        # one is still down — a rebound-within-decline entry. Original exits
+        # were profit targets/stops (risk_model levers here); signal-side exit
+        # fires when the long-term downtrend condition dies.
+        long_lb = int(strategy.parameters["long_lookback"])
+        fast_lb = int(strategy.parameters["fast_lookback"])
+        slow_lb = int(strategy.parameters["slow_lookback"])
+        max_hold = int(strategy.risk_model.get("max_hold_days", 0))
+        dm_signals: list[bool] = []
+        in_position = False
+        days_held = 0
+        for index in range(len(closes)):
+            if index < long_lb:
+                dm_signals.append(False)
+                continue
+            long_down = closes[index] < closes[index - long_lb]
+            fast_up = closes[index] > closes[index - fast_lb]
+            slow_down = closes[index] < closes[index - slow_lb]
+            if in_position:
+                days_held += 1
+                forced = max_hold > 0 and days_held >= max_hold
+                if not long_down or forced:
+                    in_position = False
+                    days_held = 0
+            elif long_down and fast_up and slow_down:
+                in_position = True
+                days_held = 0
+            dm_signals.append(in_position)
+        return dm_signals
 
     if strategy.name == "donchian_breakout":
         entry_n = int(strategy.parameters["entry_lookback"])

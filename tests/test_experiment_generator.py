@@ -10,6 +10,10 @@ ALL_STRATEGY_NAMES = {
     "sector_momentum_leadership",
     "sma_reversion",
     "gap_momentum",
+    "bollinger_reversion",
+    "percent_rank_momentum",
+    "day_of_week_momentum",
+    "dual_momentum_band",
 }
 
 
