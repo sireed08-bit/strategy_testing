@@ -1,4 +1,41 @@
 version: 1
+
+# Multi-symbol switch/rotation strategies (portfolio engine v1: hold exactly one
+# symbol at a time, or cash). Run via /run-portfolio against portfolio_etfs.csv.
+portfolio_strategies:
+  - family: risk_on_risk_off
+    name: regime_switch_pair
+    hypothesis: Hold the risk asset above its trend SMA, the safe asset below it — the strategy spy_tlt_regime_switch always promised but never delivered.
+    rules:
+      entry: risk close > SMA(trend_sma) -> hold risk_symbol; else hold safe_symbol
+      exit: continuous switching
+    parameter_grid:
+      risk_symbol: [SPY, QQQ]
+      safe_symbol: [TLT, IEF]
+      trend_sma: [150, 200]
+
+  - family: momentum
+    name: relative_momentum_rotation
+    hypothesis: At each rebalance, the strongest trailing return persists; cash when nothing is positive.
+    rules:
+      entry: hold argmax trailing return across the symbol set (if positive)
+      exit: rebalance every rebalance_days
+    parameter_grid:
+      symbols: [[SPY, QQQ, IWM, DIA], [SPY, QQQ, TLT, GLD]]
+      lookback: [63, 126]
+      rebalance_days: [21]
+
+  - family: risk_on_risk_off
+    name: bond_low_risk_off
+    hypothesis: A bond close at an N-day low (rates spiking) precedes equity weakness — step to cash. (YT catalog cross-asset signal, long-only translation.)
+    rules:
+      entry: hold equity_symbol unless bond close is the lowest of the last low_lookback days
+      exit: risk-off to cash on bond low
+    parameter_grid:
+      equity_symbol: [SPY, QQQ]
+      bond_symbol: [TLT]
+      low_lookback: [30, 42]
+
 strategies:
   - family: trend_following
     name: moving_average_cross

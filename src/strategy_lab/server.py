@@ -960,6 +960,118 @@ def advance_vintage(dataset: str = "default") -> dict:
     return result
 
 
+# ── multi-symbol (switch/rotation) portfolio research ─────────────────────────
+
+_PORTFOLIO_SYMBOLS = ["SPY", "QQQ", "IWM", "DIA", "TLT", "IEF", "GLD"]
+_PORTFOLIO_CSV_NAME = "portfolio_etfs.csv"
+
+
+def _portfolio_csv() -> Path:
+    p = _private_storage() / "data" / "market_data" / _PORTFOLIO_CSV_NAME
+    if not p.exists():
+        raise HTTPException(500, f"Portfolio data not found at {p}. Call /refresh-portfolio-data first.")
+    return p
+
+
+@app.post("/refresh-portfolio-data")
+def refresh_portfolio_data(start: str = "2020-01-01") -> dict:
+    """Download bars for the multi-symbol universe (equities + bonds + gold)."""
+    output = _private_storage() / "data" / "market_data" / _PORTFOLIO_CSV_NAME
+    end = datetime.now(timezone.utc).date().isoformat()
+    try:
+        creds = credentials_from_env()
+        rows = download_stock_bars_csv(
+            symbols=_PORTFOLIO_SYMBOLS, start=start, end=end,
+            output_path=output, credentials=creds,
+        )
+        return {"status": "ok", "rows_written": rows, "path": str(output)}
+    except Exception as exc:
+        raise HTTPException(502, f"Portfolio data download failed: {exc}")
+
+
+@app.post("/run-portfolio")
+def run_portfolio() -> dict:
+    """
+    Evaluate every combo in the portfolio_strategies grid: switch/rotation
+    strategies holding one symbol at a time (or cash) — the classes the
+    single-symbol engine cannot express. Same discipline as everything else:
+    costs, exam trim, warm OOS, benchmark-relative scoring (benchmark = the
+    risk leg's buy-and-hold), fingerprints, dedup, one log.
+    """
+    from strategy_lab.data_loader import dataset_vintage_end
+    from strategy_lab.experiment_generator import expand_grid, load_experiment_space
+    from strategy_lab.fingerprints import experiment_fingerprint
+    from strategy_lab.models import DatasetSpec, ExperimentRecord, StrategySpec
+    from strategy_lab.portfolio_backtest import evaluate_portfolio, portfolio_symbols
+    from strategy_lab.scoring import score_metrics
+
+    csv = _portfolio_csv()
+    end_cap = dataset_vintage_end(_VINTAGE_FILE, "portfolio", csv)
+    space = load_experiment_space()
+    items = space.get("portfolio_strategies", [])
+    if not items:
+        raise HTTPException(400, "No portfolio_strategies section in experiment_space.yaml.")
+
+    with _batch_write_lock():
+        log = ExperimentLog(_EXPERIMENT_LOG)
+        known = log.fingerprints()
+        bars_cache: dict = {}
+        created = skipped = errored = 0
+        for item in items:
+            for parameters in expand_grid(item.get("parameter_grid", {})):
+                for risk_model in expand_grid(item.get("risk_grid", {})):
+                    spec = StrategySpec(
+                        family=item["family"], name=item["name"],
+                        hypothesis=item.get("hypothesis", ""),
+                        rules=item.get("rules", {}),
+                        parameters=parameters, risk_model=risk_model,
+                    )
+                    try:
+                        needed = portfolio_symbols(spec)
+                        for symbol in needed:
+                            if symbol not in bars_cache:
+                                bars, _ = load_price_bars_from_csv(csv, symbol, end_cap=end_cap)
+                                bars_cache[symbol] = bars
+                        bars_by_symbol = {s: bars_cache[s] for s in needed}
+                        metrics, validation, ds = evaluate_portfolio(spec, bars_by_symbol)
+                        dataset = DatasetSpec(
+                            name=csv.stem, symbols=ds["symbols"], timeframe="1D",
+                            start=ds["start"], end=ds["end"],
+                        )
+                        fingerprint = experiment_fingerprint(spec, dataset)
+                        if fingerprint in known:
+                            skipped += 1
+                            continue
+                        result = score_metrics(metrics)
+                        grade = result.grade
+                        weaknesses = list(result.weaknesses)
+                        if validation.pop("failed_oos", False):
+                            grade = "reject"
+                            weaknesses.append(f"fails out-of-sample (oos_score={validation.get('oos_score')})")
+                        record = ExperimentRecord(
+                            strategy=spec, dataset=dataset, metrics=metrics,
+                            score=result.score, grade=grade,
+                            conclusion=f"Portfolio switch evaluation ({grade}).",
+                            fingerprint=fingerprint, weaknesses=weaknesses,
+                            next_action="Compare against the risk leg's buy-and-hold.",
+                            validation=validation,
+                        )
+                        log.append(record)
+                        known.add(fingerprint)
+                        created += 1
+                    except (ValueError, KeyError) as exc:
+                        errored += 1
+    _notify(
+        title="Strategy Lab — portfolio batch complete",
+        message=f"{created} portfolio experiments created ({skipped} known, {errored} errored).",
+        priority="default",
+    )
+    return {
+        "created": created, "skipped": skipped, "errored": errored,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # ── deep history (Yahoo, 2005+) ───────────────────────────────────────────────
 
 @app.post("/refresh-deep-data")
