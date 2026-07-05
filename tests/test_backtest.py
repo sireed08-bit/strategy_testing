@@ -299,6 +299,34 @@ def test_day_of_week_momentum_only_enters_on_configured_weekday() -> None:
             assert date.fromisoformat(bars[i].date).weekday() == 3
 
 
+def test_turn_of_month_holds_only_around_month_boundaries() -> None:
+    from strategy_lab.backtest import build_signals_from_bars
+
+    bars = [PriceBar(date=f"2026-03-{d:02d}", symbol="SPY", close=100.0) for d in range(1, 32)]
+    spec = StrategySpec(
+        family="calendar", name="turn_of_month", hypothesis="", rules={},
+        parameters={"entry_day": 26, "exit_day": 3}, risk_model={},
+    )
+    signals = build_signals_from_bars(spec, bars)
+    by_day = {d + 1: signals[d] for d in range(31)}
+    assert by_day[2] is True and by_day[3] is True     # first days of the month
+    assert by_day[15] is False and by_day[20] is False  # mid-month flat
+    assert by_day[26] is True and by_day[31] is True    # month-end run-up
+
+
+def test_month_range_hold_wraps_year_boundary() -> None:
+    from strategy_lab.backtest import build_signals_from_bars
+
+    bars = [PriceBar(date=f"2026-{m:02d}-15", symbol="SPY", close=100.0) for m in range(1, 13)]
+    spec = StrategySpec(
+        family="calendar", name="month_range_hold", hypothesis="", rules={},
+        parameters={"start_month": 11, "end_month": 4}, risk_model={},
+    )
+    signals = build_signals_from_bars(spec, bars)
+    held_months = [m + 1 for m in range(12) if signals[m]]
+    assert held_months == [1, 2, 3, 4, 11, 12]  # Nov-Apr, wrapped
+
+
 def test_dual_momentum_band_requires_all_three_conditions() -> None:
     from strategy_lab.backtest import build_signals
 

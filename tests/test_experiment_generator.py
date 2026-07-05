@@ -14,6 +14,8 @@ ALL_STRATEGY_NAMES = {
     "percent_rank_momentum",
     "day_of_week_momentum",
     "dual_momentum_band",
+    "turn_of_month",
+    "month_range_hold",
 }
 
 

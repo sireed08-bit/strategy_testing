@@ -171,6 +171,30 @@ strategies:
     risk_grid:
       max_hold_days: [3, 5]
 
+  - family: calendar
+    name: turn_of_month
+    hypothesis: The turn-of-month effect — equity returns cluster in the last and first few trading days of each month. (YT catalog / academic anomaly.)
+    rules:
+      entry: calendar day >= entry_day
+      exit: calendar day > exit_day of the following month
+    parameter_grid:
+      entry_day: [24, 26, 28]
+      exit_day: [3, 5]
+    risk_grid:
+      stop_loss_pct: [8]
+
+  - family: calendar
+    name: month_range_hold
+    hypothesis: Seasonal month-span holding (Nov-Apr style) captures the favourable half of the year. (YT catalog / TrendSpider seasonal archetype.)
+    rules:
+      entry: month enters the configured window (wrap-around supported)
+      exit: month leaves the window
+    parameter_grid:
+      start_month: [10, 11]
+      end_month: [4, 5]
+    risk_grid:
+      stop_loss_pct: [8]
+
   - family: mean_reversion
     name: dual_momentum_band
     hypothesis: Within a long-term decline, a fast-lookback upturn against a still-falling slow lookback marks a rebound entry. (YT catalog / Davey's recurring momentum entry structure.)

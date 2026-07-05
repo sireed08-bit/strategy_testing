@@ -251,6 +251,34 @@ def build_signals_from_bars(strategy: StrategySpec, bars: list[PriceBar]) -> lis
             signals.append(in_position)
         return signals
 
+    if strategy.name == "turn_of_month":
+        # YT catalog ("End-of-Month Long"): the turn-of-month effect — long from
+        # late in each month (day >= entry_day) through the first days of the
+        # next (day <= exit_day). One of the few calendar anomalies with real
+        # academic support; the lab decides whether it survives costs and OOS.
+        entry_day = int(strategy.parameters["entry_day"])
+        exit_day = int(strategy.parameters["exit_day"])
+        tom_signals: list[bool] = []
+        for index in range(len(bars)):
+            day = _date.fromisoformat(bars[index].date).day
+            tom_signals.append(day >= entry_day or day <= exit_day)
+        return tom_signals
+
+    if strategy.name == "month_range_hold":
+        # YT catalog (seasonal month-span holds, e.g. Nov–Apr): hold during the
+        # configured month window, wrap-around supported (start 11, end 4).
+        start_month = int(strategy.parameters["start_month"])
+        end_month = int(strategy.parameters["end_month"])
+        mr_signals: list[bool] = []
+        for index in range(len(bars)):
+            month = _date.fromisoformat(bars[index].date).month
+            if start_month <= end_month:
+                in_window = start_month <= month <= end_month
+            else:  # wraps the year boundary
+                in_window = month >= start_month or month <= end_month
+            mr_signals.append(in_window)
+        return mr_signals
+
     if strategy.name == "day_of_week_momentum":
         # From the YT mined-strategy catalog (Kevin Davey's NQ day-of-week
         # momentum): enter on a specific weekday only when long momentum is up.
