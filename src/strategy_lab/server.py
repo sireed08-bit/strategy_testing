@@ -681,6 +681,53 @@ def signals(limit: int = 10) -> dict:
     }
 
 
+# ── external signals (TradingView alerts etc. → the same forward journal) ─────
+
+class ExternalSignal(BaseModel):
+    source: str = "tradingview"
+    symbol: str
+    signal: str  # "entry" | "exit" | "hold_long" | "flat"
+    strategy_name: str = "unnamed"
+    parameters: dict = {}
+    price: float | None = None
+    bar_date: str = ""  # ISO date; defaults to today (UTC)
+
+
+@app.post("/external-signal")
+def external_signal(sig: ExternalSignal) -> dict:
+    """
+    Journal a signal from an EXTERNAL system (e.g. a TradingView alert webhook
+    routed through n8n) into the same forward journal the lab's own strategies
+    use. External ideas earn the identical walk-forward accounting: T+1 fills,
+    costs, benchmark comparison — so a Pine strategy or a YouTube guru's system
+    builds the same kind of forward record before anyone trusts it.
+    """
+    from strategy_lab.signal_journal import append_signals
+
+    if sig.signal not in {"entry", "exit", "hold_long", "flat"}:
+        raise HTTPException(400, f"Unknown signal '{sig.signal}'.")
+    bar_date = sig.bar_date or datetime.now(timezone.utc).date().isoformat()
+    row = {
+        "last_bar_date": bar_date,
+        "symbol": sig.symbol.upper(),
+        "signal": sig.signal,
+        "last_close": sig.price,
+        "score": None,
+        "strategy_identity": {
+            "name": f"external:{sig.source}:{sig.strategy_name}",
+            "parameters": sig.parameters,
+            "risk_model": {},
+        },
+    }
+    written = append_signals(_SIGNAL_JOURNAL, [row])
+    return {
+        "journaled": written,
+        "deduplicated": written == 0,
+        "bar_date": bar_date,
+        "stream": row["strategy_identity"]["name"],
+    }
+
+
 # ── forward journal (walk-forward record of past signals) ────────────────────
 
 @app.get("/journal")
@@ -696,8 +743,13 @@ def journal() -> dict:
     csv = _data_csv()
 
     def _load(symbol: str):
-        bars, _ = load_price_bars_from_csv(csv, symbol)
-        return bars
+        try:
+            bars, _ = load_price_bars_from_csv(csv, symbol)
+            return bars
+        except ValueError:
+            # External signals may reference scanner-universe symbols.
+            bars, _ = load_price_bars_from_csv(_scanner_csv(), symbol)
+            return bars
 
     report = evaluate_journal(_SIGNAL_JOURNAL, _load)
     report["as_of"] = datetime.now(timezone.utc).isoformat()

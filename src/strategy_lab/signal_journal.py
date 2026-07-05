@@ -121,8 +121,20 @@ def evaluate_journal(
 
     for (key, symbol), entries in streams.items():
         if symbol not in bars_cache:
-            bars_cache[symbol] = sorted(load_bars(symbol), key=lambda b: b.date)
+            try:
+                bars_cache[symbol] = sorted(load_bars(symbol), key=lambda b: b.date)
+            except Exception:
+                bars_cache[symbol] = []  # symbol not in any known dataset
         bars = bars_cache[symbol]
+        if not bars:
+            reports.append({
+                "key": key,
+                "symbol": symbol,
+                "strategy": entries[-1].get("strategy", {}).get("name"),
+                "journal_days": len(entries),
+                "status": "no_price_data",
+            })
+            continue
         date_index = {bar.date: i for i, bar in enumerate(bars)}
 
         def _fill_after(bar_date: str) -> tuple[str, float] | None:

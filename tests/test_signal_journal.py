@@ -59,6 +59,20 @@ def test_evaluate_journal_computes_t_plus_1_fills_and_benchmark(tmp_path) -> Non
     assert abs(stream["buy_and_hold_pct"] - 10.0) < 0.01
 
 
+def test_evaluate_journal_skips_symbols_without_price_data(tmp_path) -> None:
+    """External signals may reference symbols no dataset covers — the stream is
+    reported as no_price_data instead of blowing up the whole report."""
+    journal = tmp_path / "journal.jsonl"
+    append_signals(journal, [_row("2026-06-01", "entry", symbol="OBSCURE")])
+
+    def _load(symbol: str):
+        raise ValueError(f"No rows found for symbol {symbol}")
+
+    report = evaluate_journal(journal, _load)
+    assert len(report["streams"]) == 1
+    assert report["streams"][0]["status"] == "no_price_data"
+
+
 def test_evaluate_journal_marks_open_positions(tmp_path) -> None:
     journal = tmp_path / "journal.jsonl"
     append_signals(journal, [_row("2026-06-01", "entry")])
