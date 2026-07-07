@@ -86,7 +86,10 @@
    decision (human's) is routing it to the existing Alpaca paper-trading
    infrastructure.
 5. Quarterly: /advance-vintage per dataset (watchdog nudges at 100 days).
-6. Open question, not yet root-caused: the server process itself died
-   silently (no traceback) on 2026-07-06 after ~13h of continuous
-   backtesting — possibly memory growth in the long-lived Python process.
-   Worth a memory profile during the next multi-hour batch if it recurs.
+6. SOLVED 2026-07-06 (see docs/handoff/FIX_BRIEF_watchdog_fratricide.md):
+   both "silent server deaths" were the WATCHDOG killing a healthy-but-busy
+   server — /health parses the whole 85MB log, exceeds the 20s probe timeout
+   under batch load, and the "self-heal" Stop-Process executes the process.
+   Memory hypothesis REFUTED (peak WS 489MB / 30GB machine; zero crash events
+   in Windows Event Log). Fix brief is ready for implementation: O(1) /health,
+   watchdog busy-vs-dead ladder, start_server refusal on a fresh lock.
