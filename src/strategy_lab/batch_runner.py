@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
+from typing import Callable
 
 from strategy_lab.backtest import PriceBar, run_backtest, run_backtest_window
 from strategy_lab.data_loader import load_price_bars_from_csv, synthetic_price_bars
@@ -27,6 +28,7 @@ def run_backtest_batch(
     shard_index: int = 0,
     shard_count: int = 1,
     end_cap: str | None = None,
+    heartbeat: Callable[[], None] | None = None,
 ) -> ResearchRunRecord:
     bars, dataset = (
         load_price_bars_from_csv(data_csv, symbol, end_cap=end_cap)
@@ -43,7 +45,7 @@ def run_backtest_batch(
     )
 
     created, skipped, errored, notes = evaluate_and_log_strategies(
-        strategies, bars, dataset, experiment_log
+        strategies, bars, dataset, experiment_log, heartbeat=heartbeat
     )
 
     all_records = experiment_log.records()
@@ -107,13 +109,27 @@ def evaluate_and_log_strategies(
     bars: list[PriceBar],
     dataset,
     experiment_log: ExperimentLog,
+    heartbeat: Callable[[], None] | None = None,
 ) -> tuple[int, int, int, list[str]]:
-    """Backtest, score, OOS-validate and append each spec. Reused by auto-research."""
+    """
+    Backtest, score, OOS-validate and append each spec. Reused by auto-research.
+
+    heartbeat, if given, is called once per experiment (not once per symbol —
+    a single deep-history symbol can take ~2h, so anything coarser than
+    per-experiment cadence cannot let the batch write-lock's stale-reclaim
+    threshold shrink below that same ~2h ceiling). Best-effort: a heartbeat
+    failure must never abort a research batch.
+    """
     created = skipped = errored = 0
     notes: list[str] = []
     # Everything below sees only the pre-exam history; the tail stays unseen.
     bars = trim_final_exam(bars)
     for strategy in strategies:
+        if heartbeat is not None:
+            try:
+                heartbeat()
+            except Exception:
+                pass
         try:
             metrics = run_backtest(strategy, bars)
             result = score_metrics(metrics)

@@ -1,5 +1,6 @@
 from strategy_lab.backtest import PriceBar, run_backtest_window
 from strategy_lab.batch_runner import (
+    evaluate_and_log_strategies,
     final_exam_start_index,
     out_of_sample_validation,
     run_backtest_batch,
@@ -8,6 +9,7 @@ from strategy_lab.batch_runner import (
 from strategy_lab.experiment_log import ExperimentLog
 from strategy_lab.models import StrategySpec
 from strategy_lab.run_ledger import ResearchRunLedger
+from strategy_lab.strategy_ideas import seed_strategy_specs
 
 
 def test_run_backtest_batch_creates_fresh_records_and_ledger_entry(tmp_path) -> None:
@@ -94,6 +96,52 @@ def test_run_backtest_window_keeps_indicators_warm() -> None:
     warm = run_backtest_window(strategy, bars, split)
     assert cold["trade_count"] == 0.0  # cold slice never clears the SMA warmup
     assert warm["trade_count"] > 0.0  # warm indicators trade from bar one
+
+
+def test_heartbeat_fires_once_per_experiment_not_per_symbol(tmp_path) -> None:
+    """The lock heartbeat must fire from inside the per-EXPERIMENT loop. A
+    single deep-history symbol can run for ~2h, so anything coarser than
+    per-experiment cadence would force the stale-lock threshold back up near
+    that ceiling (see docs/handoff/DEBUGGING.md D3)."""
+    from strategy_lab.models import DatasetSpec
+
+    bars = [
+        PriceBar(date=f"2021-{m:02d}-{d:02d}", symbol="SPY", close=100.0 + m + d)
+        for m in range(1, 13)
+        for d in range(1, 29)
+    ]
+    strategies = seed_strategy_specs()[:3]
+    log = ExperimentLog(tmp_path / "experiments.jsonl")
+    dataset = DatasetSpec(name="t", symbols=["SPY"], timeframe="1D", start=bars[0].date, end=bars[-1].date)
+
+    beats = []
+    evaluate_and_log_strategies(
+        strategies, bars, dataset, log, heartbeat=lambda: beats.append(1)
+    )
+    assert len(beats) == len(strategies)  # once per experiment, not once total
+
+
+def test_heartbeat_failure_never_aborts_the_batch(tmp_path) -> None:
+    """A raising heartbeat must be swallowed — it is best-effort instrumentation,
+    never allowed to break a research batch."""
+    from strategy_lab.models import DatasetSpec
+
+    bars = [
+        PriceBar(date=f"2021-{m:02d}-{d:02d}", symbol="SPY", close=100.0 + m + d)
+        for m in range(1, 13)
+        for d in range(1, 29)
+    ]
+    strategies = seed_strategy_specs()[:2]
+    log = ExperimentLog(tmp_path / "experiments.jsonl")
+    dataset = DatasetSpec(name="t", symbols=["SPY"], timeframe="1D", start=bars[0].date, end=bars[-1].date)
+
+    def _broken_heartbeat():
+        raise OSError("simulated disk hiccup")
+
+    created, skipped, errored, notes = evaluate_and_log_strategies(
+        strategies, bars, dataset, log, heartbeat=_broken_heartbeat
+    )
+    assert created + skipped == len(strategies)  # batch still completed normally
 
 
 def test_trim_final_exam_reserves_the_tail() -> None:

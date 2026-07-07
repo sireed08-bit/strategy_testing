@@ -3,6 +3,7 @@ Integration tests for the FastAPI layer — hermetic: all state paths are
 monkeypatched to tmp fixtures, no private storage, market data, or network.
 """
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -87,3 +88,50 @@ def test_top_results_shape(client) -> None:
 def test_run_all_rejects_unknown_dataset(client) -> None:
     response = client.post("/run-all?dataset=nonsense")
     assert response.status_code == 400
+
+
+def test_batch_lock_yields_a_working_heartbeat(client) -> None:
+    """The lock context manager must yield a callable that refreshes the lock
+    file's mtime — this is what lets the stale-reclaim window stay short
+    (15 min) without false-reclaiming a genuinely running batch."""
+    import time
+
+    with server._batch_write_lock() as heartbeat:
+        assert callable(heartbeat)
+        before = server._BATCH_LOCK.stat().st_mtime
+        time.sleep(0.05)
+        heartbeat()
+        after = server._BATCH_LOCK.stat().st_mtime
+        assert after >= before
+    assert not server._BATCH_LOCK.exists()  # released on exit
+
+
+def test_heartbeat_never_raises_on_a_missing_lock_file(client) -> None:
+    """_touch_lock is called from inside hot research loops — it must be
+    silent even if the lock file has vanished underneath it (e.g. a concurrent
+    process deleted it), never crashing the batch that called it."""
+    assert not server._BATCH_LOCK.exists()
+    server._touch_lock()  # must not raise
+
+
+def test_stale_lock_is_reclaimed_after_the_window(client, monkeypatch) -> None:
+    import os
+
+    server._BATCH_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    server._BATCH_LOCK.write_text("stale", encoding="utf-8")
+    old = time.time() - server._STALE_LOCK_SECONDS - 1
+    os.utime(server._BATCH_LOCK, (old, old))
+    with server._batch_write_lock() as heartbeat:
+        assert callable(heartbeat)  # reclaimed, not rejected with 409
+
+
+def test_fresh_lock_is_not_reclaimed(client) -> None:
+    from fastapi import HTTPException
+
+    server._BATCH_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    server._BATCH_LOCK.write_text("fresh", encoding="utf-8")
+    with pytest.raises(HTTPException) as exc_info:
+        with server._batch_write_lock():
+            pass
+    assert exc_info.value.status_code == 409
+    server._BATCH_LOCK.unlink()  # cleanup: this path doesn't own the lock

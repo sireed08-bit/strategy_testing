@@ -70,16 +70,39 @@ def _env(key: str, default: str = "") -> str:
 # â”€â”€ batch write lock â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Only one batch may write the experiment log at a time. Without this, a manual
 # /run-all overlapping a scheduled (n8n) one interleaves JSONL lines and corrupts
-# the log. The lock is an atomic O_CREAT|O_EXCL file; a stale lock (dead process
-# or >2h old) is reclaimed so a crash can't deadlock future runs.
+# the log. The lock is an atomic O_CREAT|O_EXCL file; a stale lock is reclaimed
+# so a crash can't deadlock future runs.
+#
+# HEARTBEAT (added after two incidents): the original design treated "stale" as
+# "created more than 2h ago" - but a single deep-history symbol can legitimately
+# run for ~2h, so that threshold could not shrink without false-reclaiming live
+# batches. 2026-07-06: a batch died silently mid-run (no traceback - likely
+# resource exhaustion after ~13h continuous); a second incident had already
+# shown that reclaiming a still-live lock loses records (a concurrent /prune
+# during the 24h backfill). Fix: batches now touch the lock's mtime once per
+# EXPERIMENT (not per symbol - see _touch_lock callers), so a genuinely alive
+# batch keeps refreshing every few seconds and the stale threshold can drop to
+# 15 minutes: tight enough to recover fast from a real crash, loose enough that
+# no live batch is ever mistaken for dead.
 import contextlib
 
 _BATCH_LOCK = _DATA_ROOT / "experiments" / ".batch.lock"
-_STALE_LOCK_SECONDS = 2 * 60 * 60
+_STALE_LOCK_SECONDS = 15 * 60
+
+
+def _touch_lock() -> None:
+    """Best-effort heartbeat: refresh the lock file's mtime. Never raises -
+    a heartbeat failure must not abort a research batch."""
+    try:
+        os.utime(_BATCH_LOCK, None)
+    except OSError:
+        pass
 
 
 @contextlib.contextmanager
 def _batch_write_lock():
+    """Yields a heartbeat callable; callers should invoke it from inside their
+    innermost per-experiment loop (see batch_runner.evaluate_and_log_strategies)."""
     _BATCH_LOCK.parent.mkdir(parents=True, exist_ok=True)
     if _BATCH_LOCK.exists():
         age = datetime.now(timezone.utc).timestamp() - _BATCH_LOCK.stat().st_mtime
@@ -89,12 +112,12 @@ def _batch_write_lock():
                 "A batch is already running (experiment log is locked). "
                 "Wait for it to finish or retry shortly.",
             )
-        _BATCH_LOCK.unlink(missing_ok=True)  # stale â€” reclaim it
+        _BATCH_LOCK.unlink(missing_ok=True)  # stale - reclaim it
     fd = os.open(str(_BATCH_LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     try:
         os.write(fd, f"{os.getpid()} {datetime.now(timezone.utc).isoformat()}".encode())
         os.close(fd)
-        yield
+        yield _touch_lock
     finally:
         _BATCH_LOCK.unlink(missing_ok=True)
 
@@ -429,7 +452,7 @@ def run_scanner_batch(symbols: str = "", limit: int = 400, dataset: str = "scann
     end_cap = _vintage_end(dataset)
     date_str = datetime.now(timezone.utc).date().isoformat()
     results = []
-    with _batch_write_lock():
+    with _batch_write_lock() as heartbeat:
         for symbol in picked:
             try:
                 result = run_backtest_batch(
@@ -441,6 +464,7 @@ def run_scanner_batch(symbols: str = "", limit: int = 400, dataset: str = "scann
                     data_csv=csv,
                     symbol=symbol,
                     end_cap=end_cap,
+                    heartbeat=heartbeat,
                 )
                 results.append({
                     "symbol": symbol,
@@ -981,7 +1005,7 @@ def run_batch(req: BatchRequest) -> dict:
         f"Autonomous batch â€” {req.symbol} â€” {datetime.now(timezone.utc).date().isoformat()}"
     )
     try:
-        with _batch_write_lock():
+        with _batch_write_lock() as heartbeat:
             result = run_backtest_batch(
                 experiment_log_path=_EXPERIMENT_LOG,
                 run_log_path=_RUN_LOG,
@@ -991,6 +1015,7 @@ def run_batch(req: BatchRequest) -> dict:
                 data_csv=_select_csv(req.dataset),
                 symbol=req.symbol,
                 end_cap=_vintage_end(req.dataset),
+                heartbeat=heartbeat,
             )
         return result.to_dict()
     except HTTPException:
@@ -1003,11 +1028,11 @@ def run_batch(req: BatchRequest) -> dict:
 
 @app.post("/run-all")
 def run_all(limit: int = 400, dataset: str = "default") -> dict:
-    with _batch_write_lock():
-        return _run_all_locked(limit, dataset)
+    with _batch_write_lock() as heartbeat:
+        return _run_all_locked(limit, dataset, heartbeat)
 
 
-def _run_all_locked(limit: int, dataset: str = "default") -> dict:
+def _run_all_locked(limit: int, dataset: str = "default", heartbeat=None) -> dict:
     csv = _select_csv(dataset)
     end_cap = _vintage_end(dataset)
     date_str = datetime.now(timezone.utc).date().isoformat()
@@ -1024,6 +1049,7 @@ def _run_all_locked(limit: int, dataset: str = "default") -> dict:
                 data_csv=csv,
                 symbol=symbol,
                 end_cap=end_cap,
+                heartbeat=heartbeat,
             )
             results.append({
                 "symbol": symbol,
@@ -1095,7 +1121,7 @@ def auto_research(
     """
     from strategy_lab.auto_research import run_auto_research
 
-    with _batch_write_lock():
+    with _batch_write_lock() as heartbeat:
         result = run_auto_research(
             experiment_log_path=_EXPERIMENT_LOG,
             run_log_path=_RUN_LOG,
@@ -1106,6 +1132,7 @@ def auto_research(
             max_new_per_symbol=max_new_per_symbol,
             end_cap=_vintage_end(dataset),
             objective=objective,
+            heartbeat=heartbeat,
         )
     headline = (
         f"+{result['experiments_created']} refined experiments. "
@@ -1239,7 +1266,7 @@ def run_portfolio() -> dict:
     if not items:
         raise HTTPException(400, "No portfolio_strategies section in experiment_space.yaml.")
 
-    with _batch_write_lock():
+    with _batch_write_lock() as heartbeat:
         log = ExperimentLog(_EXPERIMENT_LOG)
         known = log.fingerprints()
         bars_cache: dict = {}
@@ -1247,6 +1274,10 @@ def run_portfolio() -> dict:
         for item in items:
             for parameters in expand_grid(item.get("parameter_grid", {})):
                 for risk_model in expand_grid(item.get("risk_grid", {})):
+                    try:
+                        heartbeat()
+                    except Exception:
+                        pass
                     spec = StrategySpec(
                         family=item["family"], name=item["name"],
                         hypothesis=item.get("hypothesis", ""),

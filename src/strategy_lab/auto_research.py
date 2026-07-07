@@ -18,6 +18,7 @@ from __future__ import annotations
 import random
 from collections import Counter
 from pathlib import Path
+from typing import Callable
 
 from strategy_lab.analysis import cross_symbol_support, top_robust_records
 from strategy_lab.batch_runner import (
@@ -302,6 +303,7 @@ def run_auto_research(
     max_new_per_symbol: int = 60,
     end_cap: str | None = None,
     objective: str = "score",
+    heartbeat: Callable[[], None] | None = None,
 ) -> dict:
     """One refinement round across all symbols. Returns a summary dict."""
     experiment_log = ExperimentLog(experiment_log_path)
@@ -327,7 +329,7 @@ def run_auto_research(
         explorations = propose_explorations(dataset, known, explore_budget, rng)
         proposals = refinements + explorations
         created, _, errored, _ = evaluate_and_log_strategies(
-            proposals, bars, dataset, experiment_log
+            proposals, bars, dataset, experiment_log, heartbeat=heartbeat
         )
         total_created += created
         per_symbol[symbol] = {
