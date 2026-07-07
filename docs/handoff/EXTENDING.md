@@ -69,10 +69,15 @@
 
 ## Pending items a successor inherits
 
-1. SANCTIONED code fix: lock heartbeat (batch touches the lock between
-   symbols; reclaim threshold >= 3h). ~10 lines in server.py + batch loop.
-2. Deep single-name backfill: names 5-12 (GOOGL..XLF) completing; read the
-   verdict with /regime-report + /defenders, not just scores.
+1. DONE 2026-07-06 (commit 33ed916): lock heartbeat shipped. Stale-reclaim
+   window is now 15 min (was 2h); batches heartbeat once per EXPERIMENT via
+   `_batch_write_lock()`'s yielded callable, threaded through every batch
+   entry point. NOT YET ACTIVE as of this writing — lands at the next server
+   restart after the running deep single-name backfill completes (never
+   restart the server while `_batch_write_lock` is held).
+2. Deep single-name backfill: 11 of 12 names complete as of 2026-07-06
+   (missing: XLF, in progress). Read the verdict with /regime-report +
+   /defenders, not just scores.
 3. Human's one click: TradingView Pine editor → "LabX Bollinger Reversion" →
    Add to chart → then data_get_strategy_results enables cross-engine
    validation (TV MCP: streamable HTTP, 127.0.0.1:8100/mcp, 81 tools).
@@ -81,3 +86,7 @@
    decision (human's) is routing it to the existing Alpaca paper-trading
    infrastructure.
 5. Quarterly: /advance-vintage per dataset (watchdog nudges at 100 days).
+6. Open question, not yet root-caused: the server process itself died
+   silently (no traceback) on 2026-07-06 after ~13h of continuous
+   backtesting — possibly memory growth in the long-lived Python process.
+   Worth a memory profile during the next multi-hour batch if it recurs.
