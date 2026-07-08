@@ -36,6 +36,10 @@ function Get-EnvValue($envFile, $name) {
 
 $envFile = Join-Path $root "private_controller\.env"
 $ntfyTopic = Get-EnvValue $envFile "NTFY_TOPIC"
+$dataDirEarly = Get-EnvValue $envFile "STRATEGY_DATA_DIR"
+if (-not $dataDirEarly) { $dataDirEarly = Join-Path $root "data" }
+$batchLock = Join-Path $dataDirEarly "experiments\.batch.lock"
+$staleLockSeconds = 15 * 60
 
 function Send-Alarm($title, $message) {
     Write-Log "ALARM: $title - $message"
@@ -49,25 +53,55 @@ function Send-Alarm($title, $message) {
 
 $problems = @()
 
-# -- 1. server health (with one self-heal attempt) ----------------------------
+# -- 1. server health (busy-vs-dead ladder) ------------------------------------
+# NOTE 2026-07-06: both prior "silent server deaths" were this watchdog killing
+# a healthy-but-busy server, because /health used to be O(n) on the experiment
+# log and blew past a 20s timeout under batch load. /health is now O(1); this
+# ladder additionally refuses to kill anything that is actually listening on
+# the port unless it is BOTH unresponsive AND has no fresh batch lock. See
+# docs/handoff/FIX_BRIEF_watchdog_fratricide.md.
 $healthy = $false
 try {
-    $h = Invoke-RestMethod "http://127.0.0.1:8078/health" -TimeoutSec 20
+    $h = Invoke-RestMethod "http://127.0.0.1:8078/health" -TimeoutSec 60
     $healthy = ($h.status -eq "ok")
 } catch { $healthy = $false }
 
 if (-not $healthy) {
-    Write-Log "server down - attempting restart"
-    & (Join-Path $root "start_server.ps1") | Out-Null
-    Start-Sleep -Seconds 12
-    try {
-        $h = Invoke-RestMethod "http://127.0.0.1:8078/health" -TimeoutSec 20
-        $healthy = ($h.status -eq "ok")
-    } catch { $healthy = $false }
-    if ($healthy) {
-        $problems += "Server was DOWN and was auto-restarted successfully. Check why it died (logs/server_error.log)."
+    $listening = Get-NetTCPConnection -LocalPort 8078 -State Listen -ErrorAction SilentlyContinue
+    if (-not $listening) {
+        Write-Log "server down (nothing listening on 8078) - attempting restart"
+        & (Join-Path $root "start_server.ps1") | Out-Null
+        Start-Sleep -Seconds 12
+        try {
+            $h = Invoke-RestMethod "http://127.0.0.1:8078/health" -TimeoutSec 60
+            $healthy = ($h.status -eq "ok")
+        } catch { $healthy = $false }
+        if ($healthy) {
+            $problems += "Server was DOWN and was auto-restarted successfully. Check why it died (logs/server_error.log)."
+        } else {
+            $problems += "Server is DOWN and auto-restart FAILED. The lab is not running."
+        }
     } else {
-        $problems += "Server is DOWN and auto-restart FAILED. The lab is not running."
+        $lockFresh = $false
+        if (Test-Path $batchLock) {
+            $lockAge = ((Get-Date) - (Get-Item $batchLock).LastWriteTime).TotalSeconds
+            $lockFresh = ($lockAge -lt $staleLockSeconds)
+        }
+        if ($lockFresh) {
+            Write-Log "INFO: /health unresponsive but a fresh batch lock exists (age < 15min) - server is BUSY, not dead. No restart."
+        } else {
+            Start-Sleep -Seconds 30
+            $healthy2 = $false
+            try {
+                $h = Invoke-RestMethod "http://127.0.0.1:8078/health" -TimeoutSec 60
+                $healthy2 = ($h.status -eq "ok")
+            } catch { $healthy2 = $false }
+            if ($healthy2) {
+                Write-Log "server recovered on retry - no action needed"
+            } else {
+                $problems += "Server is LISTENING on 8078 but unresponsive, and no fresh batch lock explains it. NOT auto-restarting - investigate manually (a hung-but-listening process should not be killed automatically)."
+            }
+        }
     }
 }
 

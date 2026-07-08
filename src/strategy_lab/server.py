@@ -217,15 +217,19 @@ app = FastAPI(
 
 @app.get("/health")
 def health() -> dict:
+    """Pure liveness probe - must never parse the experiment log (that O(n)
+    cost is what let the watchdog mistake a busy server for a dead one; see
+    docs/handoff/FIX_BRIEF_watchdog_fratricide.md). Everything here is O(1)."""
     storage_root = _env("STRATEGY_PRIVATE_STORAGE_ROOT")
     data_csv_exists = (
         Path(storage_root) / "data" / "market_data" / "alpaca_iex_etfs.csv"
     ).exists() if storage_root else False
-    records = ExperimentLog(_EXPERIMENT_LOG).records()
+    hot_log_bytes = _EXPERIMENT_LOG.stat().st_size if _EXPERIMENT_LOG.exists() else 0
     return {
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "total_experiments": len(records),
+        "hot_log_bytes": hot_log_bytes,
+        "batch_running": _BATCH_LOCK.exists(),
         "data_csv_exists": data_csv_exists,
         "openrouter_configured": bool(_env("OPENROUTER_API_KEY")),
         "alpaca_configured": bool(_env("ALPACA_PAPER_API_KEY")),

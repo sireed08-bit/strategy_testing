@@ -1,6 +1,6 @@
 # FIX BRIEF: Watchdog fratricide (the "silent server deaths")
 
-Status: DIAGNOSED 2026-07-06. Ready for implementation. Read this whole brief
+Status: IMPLEMENTED 2026-07-07 (see docs/handoff/DEBUGGING.md D11). Read this whole brief
 before touching code; then follow docs/handoff/SYSTEM_PROMPT.md rules
 (test-gate commits, pure-ASCII .ps1, no server restart while the batch lock
 is held).

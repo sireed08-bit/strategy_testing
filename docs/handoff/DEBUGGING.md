@@ -98,3 +98,30 @@ Checklist, in order of historical frequency:
 - sma() returns values[index] during warmup (it blocks entries; it is not None).
 - Synthetic calendar-day bars: warmup drag lands in year one of
   yearly_breakdown — assert per-year, not aggregate.
+
+## D11. Watchdog fratricide: the "silent server deaths" that weren't crashes
+
+Two incidents (2026-07-04 23:42, 2026-07-06 08:00) looked like the server
+process dying silently mid-batch — no traceback, machine never rebooted.
+Memory was the first suspect and was WRONG (peak WS 489MB / 30GB machine;
+Windows Event Log shows zero crash records at either timestamp).
+
+Actual cause: /health used to call `ExperimentLog(...).records()` — a full
+parse of the (then 85MB) experiment log — just to report a count. Under batch
+CPU load that parse exceeded the watchdog's 20s timeout, the watchdog decided
+the server was down, and its self-heal (`start_server.ps1`) ran
+`Stop-Process -Force` on the actual, healthy, busy server. External kill =
+no traceback, exactly as observed.
+
+Fix shipped: /health is now O(1) (no log parse, ever — see
+`hot_log_bytes`/`batch_running` instead of `total_experiments`).
+`watchdog.ps1` no longer restarts on a failed health check alone — it checks
+`Get-NetTCPConnection` first (nothing listening = genuinely dead, restart as
+before) and, if something IS listening, checks the batch lock mtime (< 15 min
+= busy, log INFO only, no kill). `start_server.ps1` also refuses to run its
+own Stop-Process block when a fresh lock exists, unless passed `-Force` — a
+second independent guard against the same class of mistake.
+
+Lesson: a liveness probe that scales with data size is not a liveness probe.
+If a future endpoint needs to report something expensive, it belongs in
+`/status`, never in `/health`.

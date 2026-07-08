@@ -86,10 +86,18 @@
    decision (human's) is routing it to the existing Alpaca paper-trading
    infrastructure.
 5. Quarterly: /advance-vintage per dataset (watchdog nudges at 100 days).
-6. SOLVED 2026-07-06 (see docs/handoff/FIX_BRIEF_watchdog_fratricide.md):
-   both "silent server deaths" were the WATCHDOG killing a healthy-but-busy
-   server — /health parses the whole 85MB log, exceeds the 20s probe timeout
-   under batch load, and the "self-heal" Stop-Process executes the process.
+6. FIXED 2026-07-07 (see docs/handoff/DEBUGGING.md D11 and
+   FIX_BRIEF_watchdog_fratricide.md for the original diagnosis): both "silent
+   server deaths" were the WATCHDOG killing a healthy-but-busy server —
+   /health used to parse the whole 85MB log, exceeding the 20s probe timeout
+   under batch load, and the "self-heal" Stop-Process executed the process.
    Memory hypothesis REFUTED (peak WS 489MB / 30GB machine; zero crash events
-   in Windows Event Log). Fix brief is ready for implementation: O(1) /health,
-   watchdog busy-vs-dead ladder, start_server refusal on a fresh lock.
+   in Windows Event Log). Implemented: /health is now O(1) (hot_log_bytes +
+   batch_running, no log parse, ever); watchdog.ps1 uses a busy-vs-dead
+   ladder (Get-NetTCPConnection + batch-lock mtime before ever restarting);
+   start_server.ps1 refuses to run its Stop-Process block when a fresh lock
+   exists (bypass with -Force). 3 new tests (117 total). NOT YET ACTIVATED —
+   like the heartbeat fix, this lands at the next safe server restart (no
+   batch lock held); watchdog.ps1 and start_server.ps1 changes are live
+   immediately since they run as separate processes, but /health's new
+   response shape needs the server process itself restarted.

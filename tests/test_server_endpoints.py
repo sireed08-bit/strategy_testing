@@ -36,7 +36,32 @@ def test_health_reports_ok_on_empty_log(client) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["total_experiments"] == 0
+    assert body["hot_log_bytes"] == 0
+    assert body["batch_running"] is False
+
+
+def test_health_is_ok_even_when_the_log_is_corrupt(client) -> None:
+    """/health must be pure liveness - it must never parse the experiment log.
+    A corrupt log (or a huge one) must not be able to make the liveness probe
+    fail or time out; that coupling is what caused the watchdog to kill a
+    healthy-but-busy server twice (see FIX_BRIEF_watchdog_fratricide.md)."""
+    server._EXPERIMENT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    server._EXPERIMENT_LOG.write_text("{not valid json\n", encoding="utf-8")
+    health_response = client.get("/health")
+    assert health_response.status_code == 200
+    assert health_response.json()["status"] == "ok"
+    # /status is allowed to be expensive and to fail on a corrupt log - that's
+    # the whole point of the split. It is not a liveness probe.
+    with pytest.raises(json.JSONDecodeError):
+        client.get("/status")
+
+
+def test_health_batch_running_flips_with_the_lock_file(client) -> None:
+    assert client.get("/health").json()["batch_running"] is False
+    server._BATCH_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    server._BATCH_LOCK.write_text("held", encoding="utf-8")
+    assert client.get("/health").json()["batch_running"] is True
+    server._BATCH_LOCK.unlink()
 
 
 def test_status_reports_honest_totals_including_archived(client, tmp_path) -> None:
