@@ -1189,8 +1189,11 @@ def prune() -> dict:
     """
     archive_dir = _private_storage() / "archive"
     archive_path = archive_dir / "pruned_rejects.jsonl"
-    with _batch_write_lock():
-        result = prune_experiment_log(_EXPERIMENT_LOG, archive_path)
+    # The prune heartbeats too: archiving tens of thousands of records to a
+    # OneDrive-synced path ran past the 15-minute stale window on 2026-07-13,
+    # so "prune is fast" cannot be assumed by the lock.
+    with _batch_write_lock() as heartbeat:
+        result = prune_experiment_log(_EXPERIMENT_LOG, archive_path, heartbeat=heartbeat)
     _notify(
         title="Strategy Lab â€” log pruned",
         message=(

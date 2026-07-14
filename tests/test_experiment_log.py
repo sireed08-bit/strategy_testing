@@ -75,3 +75,38 @@ def test_prune_keeps_index_so_pruned_combos_are_not_rerun(tmp_path) -> None:
     # The atomic temp-swap leaves no stray .tmp file behind.
     assert not log_path.with_suffix(log_path.suffix + ".tmp").exists()
 
+
+def test_prune_heartbeats_and_survives_a_broken_heartbeat(tmp_path) -> None:
+    """A prune of a large log to a slow (OneDrive-synced) archive path proved
+    able to outlive the 15-minute stale-lock window, so prune must heartbeat
+    like any other lock holder - and a failing heartbeat must never abort it."""
+    log_path = tmp_path / "experiments.jsonl"
+    archive_path = tmp_path / "archive" / "pruned.jsonl"
+    log = ExperimentLog(log_path)
+    records = placeholder_records()[:2]
+    for record in records:
+        record.grade = "reject"
+        log.append(record)
+
+    beats = []
+    result = prune_experiment_log(
+        log_path, archive_path, heartbeat=lambda: beats.append(1)
+    )
+    assert result["archived_this_run"] == 2
+    assert beats  # fired at least once during the archive write
+
+    # And a raising heartbeat is swallowed, not fatal.
+    log2_path = tmp_path / "experiments2.jsonl"
+    log2 = ExperimentLog(log2_path)
+    rec = placeholder_records()[0]
+    rec.grade = "reject"
+    log2.append(rec)
+
+    def _broken() -> None:
+        raise OSError("simulated disk hiccup")
+
+    result2 = prune_experiment_log(
+        log2_path, tmp_path / "archive2" / "pruned.jsonl", heartbeat=_broken
+    )
+    assert result2["archived_this_run"] == 1
+

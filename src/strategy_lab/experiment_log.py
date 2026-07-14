@@ -103,6 +103,7 @@ def prune_experiment_log(
     log_path: Path | str,
     archive_path: Path | str,
     keep_grades: tuple[str, ...] = ("watch", "promising", "candidate"),
+    heartbeat=None,
 ) -> dict:
     """
     Move reject-grade records out of the hot log into an archive, keeping the
@@ -110,6 +111,11 @@ def prune_experiment_log(
 
     Returns counts. The archive is append-only (survives repeated prunes) and is
     meant to live in private storage, not the hot working directory.
+
+    heartbeat, if given, is called periodically during the archive write - a
+    prune of a large log to a OneDrive-synced archive path proved able to run
+    past the 15-minute stale-lock window (2026-07-13), so "prune is fast" is
+    not an invariant the lock can rely on. Best-effort: failures are swallowed.
     """
     log = ExperimentLog(log_path)
     log.fingerprints()  # ensure the index exists and is complete BEFORE we rewrite
@@ -119,12 +125,22 @@ def prune_experiment_log(
     for record in records:
         (keep if record.get("grade") in keep_grades else archived).append(record)
 
+    def _beat() -> None:
+        if heartbeat is not None:
+            try:
+                heartbeat()
+            except Exception:
+                pass
+
     archive = Path(archive_path)
     if archived:
         archive.parent.mkdir(parents=True, exist_ok=True)
         with archive.open("a", encoding="utf-8") as handle:
-            for record in archived:
+            for i, record in enumerate(archived):
+                if i % 500 == 0:
+                    _beat()
                 handle.write(json.dumps(record, sort_keys=True) + "\n")
+        _beat()
 
     # Rewrite the hot log with only the kept records. The .idx sidecar is left
     # untouched, so dedup still knows about every archived fingerprint.
