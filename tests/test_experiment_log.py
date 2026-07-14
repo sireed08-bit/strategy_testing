@@ -110,3 +110,35 @@ def test_prune_heartbeats_and_survives_a_broken_heartbeat(tmp_path) -> None:
     )
     assert result2["archived_this_run"] == 1
 
+
+def test_prune_swap_retries_past_a_transient_permission_error(tmp_path, monkeypatch) -> None:
+    """On Windows, os.replace is denied while any concurrent reader holds an
+    open handle on the hot log - one denied swap aborted a real prune on
+    2026-07-13. The swap must retry, not die on the first PermissionError."""
+    import os
+
+    import strategy_lab.experiment_log as mod
+
+    log_path = tmp_path / "experiments.jsonl"
+    log = ExperimentLog(log_path)
+    rec = placeholder_records()[0]
+    rec.grade = "reject"
+    log.append(rec)
+
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def _flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError("target is open by a concurrent reader")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(mod.os, "replace", _flaky_replace)
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: None)  # no real waiting
+
+    result = prune_experiment_log(log_path, tmp_path / "archive" / "pruned.jsonl")
+    assert result["archived_this_run"] == 1
+    assert calls["n"] == 3  # failed twice, succeeded on the third attempt
+    assert len(ExperimentLog(log_path).records()) == 0  # swap actually landed
+

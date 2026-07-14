@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Iterable
 
@@ -152,7 +153,22 @@ def prune_experiment_log(
     with tmp_file.open("w", encoding="utf-8") as handle:
         for record in keep:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
-    os.replace(tmp_file, log_file)
+    # Windows denies os.replace while ANY reader holds an open handle on the
+    # target (Python opens files without FILE_SHARE_DELETE). Concurrent read
+    # endpoints (/defenders, /status, ...) legitimately hold such handles for
+    # seconds at a time, and one denied swap aborted a 15-minute prune on
+    # 2026-07-13 (archive written, hot log untouched - safe but wasted, and
+    # re-running appends duplicate rejects to the archive). Retry briefly:
+    # readers always finish.
+    for attempt in range(30):
+        try:
+            os.replace(tmp_file, log_file)
+            break
+        except PermissionError:
+            if attempt == 29:
+                raise
+            _beat()
+            time.sleep(2)
 
     # Track how many records live outside the hot log so callers can report true
     # totals. archived_total accumulates across prunes.
