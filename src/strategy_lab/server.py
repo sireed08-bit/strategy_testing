@@ -15,7 +15,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -270,6 +270,102 @@ def report() -> str:
     if not _REPORT.exists():
         raise HTTPException(404, "No report yet. Call /run-all first.")
     return _REPORT.read_text(encoding="utf-8")
+
+
+# -- weekly report (human digest, pushed via ntfy) ----------------------------
+
+@app.post("/weekly-report")
+def weekly_report(days: int = 7) -> dict:
+    """Compose a plain-English weekly digest of what the lab found and push it
+    to ntfy. Called by the Monday n8n workflow after the research batches; safe
+    to call manually any time. One O(n) pass over the hot log - cheap enough
+    weekly, and it must NOT be moved into /health (see DEBUGGING.md D11)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    records = ExperimentLog(_EXPERIMENT_LOG).records()
+    runs = ResearchRunLedger(_RUN_LOG).records()
+
+    week_records = [r for r in records if r.get("created_at", "") >= cutoff]
+    week_runs = [r for r in runs if r.get("created_at", "") >= cutoff]
+    week_grades = Counter(r.get("grade") for r in week_records)
+    new_candidates = [r for r in week_records if r.get("grade") == "candidate"]
+    new_promising = [r for r in week_records if r.get("grade") == "promising"]
+    all_grades = Counter(r.get("grade") for r in records)
+
+    # Best excess-vs-benchmark seen this week - the one number that would
+    # signal genuine alpha if it ever paired with OOS + exam validation.
+    best_excess = None
+    for r in week_records:
+        excess = r.get("metrics", {}).get("excess_return_pct")
+        if excess is not None and (best_excess is None or excess > best_excess["excess"]):
+            best_excess = {
+                "excess": excess,
+                "strategy": r["strategy"]["name"],
+                "symbol": (r["dataset"]["symbols"] or ["?"])[0],
+                "dataset": r["dataset"]["name"],
+            }
+
+    lines = [
+        f"Week of {datetime.now(timezone.utc).date().isoformat()}",
+        "",
+        f"Experiments this week: {len(week_records)} across {len(week_runs)} batch runs.",
+        f"Week grades: {week_grades.get('candidate', 0)} candidate, "
+        f"{week_grades.get('promising', 0)} promising, "
+        f"{week_grades.get('watch', 0)} watch, {week_grades.get('reject', 0)} reject.",
+        f"All-time: {all_grades.get('candidate', 0)} candidates, "
+        f"{all_grades.get('promising', 0)} promising, "
+        f"{len(records) + archived_total(_EXPERIMENT_LOG)} total experiments.",
+        "",
+    ]
+    if new_candidates:
+        names = ", ".join(
+            f"{r['strategy']['name']}/{(r['dataset']['symbols'] or ['?'])[0]}"
+            for r in new_candidates[:5]
+        )
+        lines.append(
+            f"CHAMPION-GRADE RESULT: {names}. A validated champion has never "
+            "existed - treat with maximum suspicion: check /significance, "
+            "/regime-report, and the forward journal before believing it."
+        )
+    elif new_promising:
+        names = ", ".join(
+            f"{r['strategy']['name']}/{(r['dataset']['symbols'] or ['?'])[0]}"
+            for r in new_promising[:5]
+        )
+        lines.append(
+            f"New promising-grade results this week: {names}. Promising means "
+            "'survived the gates so far', not 'beats buy-and-hold' - most "
+            "decay under OOS or the final exam."
+        )
+    else:
+        lines.append(
+            "No new alpha found this week. That is the expected result: the "
+            "21-year verdict stands (no long-only timing alpha on liquid "
+            "names). The lab's proven value is DEFENSIVE profiles - see "
+            "/defenders and /allocation - plus the forward journal maturing "
+            "toward real out-of-sample verdicts."
+        )
+    if best_excess is not None:
+        lines.append(
+            f"Best excess vs buy-and-hold this week: "
+            f"{best_excess['excess']:+.1f}% ({best_excess['strategy']}/"
+            f"{best_excess['symbol']}, {best_excess['dataset']})."
+        )
+    if not week_runs:
+        lines.append(
+            "WARNING: zero batch runs in the window - the weekly autonomy "
+            "schedule may not be firing. Check n8n and the watchdog log."
+        )
+
+    text = "\n".join(lines)
+    _notify("Strategy Lab weekly report", text)
+    return {
+        "report": text,
+        "window_days": days,
+        "week_experiments": len(week_records),
+        "week_runs": len(week_runs),
+        "new_candidates": len(new_candidates),
+        "new_promising": len(new_promising),
+    }
 
 
 # â”€â”€ top results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

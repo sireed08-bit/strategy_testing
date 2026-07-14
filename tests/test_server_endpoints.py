@@ -102,6 +102,26 @@ def test_external_signal_rejects_unknown_signal(client) -> None:
     assert response.status_code == 400
 
 
+def test_weekly_report_summarises_the_week(client) -> None:
+    _seed_log(server._EXPERIMENT_LOG, n=2, grade="promising")
+    body = client.post("/weekly-report").json()
+    assert body["week_experiments"] == 2
+    assert body["new_promising"] == 2
+    assert "promising" in body["report"]
+    # Placeholder records carry a fresh created_at, so they land in the window.
+    assert "Experiments this week: 2" in body["report"]
+
+
+def test_weekly_report_on_a_quiet_week_says_so(client) -> None:
+    body = client.post("/weekly-report").json()
+    assert body["week_experiments"] == 0
+    assert body["new_candidates"] == 0
+    # The honest default message: no alpha is the expected result.
+    assert "No new alpha found this week" in body["report"]
+    # And a quiet week with zero runs warns that autonomy may be stalled.
+    assert "zero batch runs" in body["report"]
+
+
 def test_top_results_shape(client) -> None:
     _seed_log(server._EXPERIMENT_LOG, n=2)
     body = client.get("/top-results?limit=5").json()

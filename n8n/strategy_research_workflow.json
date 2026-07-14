@@ -183,13 +183,19 @@
       "position": [2000, 220]
     },
     {
-      "parameters": {},
-      "id": "11111111-0000-0000-0000-000000000010",
-      "name": "→ Add Notification Here",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
+      "parameters": {
+        "url": "http://host.docker.internal:8078/weekly-report",
+        "method": "POST",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "11111111-0000-0000-0000-000000000013",
+      "name": "Send Weekly Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
       "position": [2220, 220],
-      "notes": "Connect an Email, Slack, Telegram, or webhook node here.\nThe summary text is in {{ $json.summary }}.\n\nExample: Gmail node → To: you@example.com, Subject: Strategy Lab Weekly, Body: {{ $json.summary }}"
+      "notes": "The server composes the plain-English weekly digest (what was found, grade deltas, worth-continuing signal) and pushes it via ntfy itself - the topic never appears in this public workflow JSON."
     },
     {
       "parameters": {
@@ -205,7 +211,7 @@
         },
         "options": {}
       },
-      "id": "11111111-0000-0000-0000-000000000011",
+      "id": "11111111-0000-0000-0000-000000000014",
       "name": "Server Down Alert",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3,
@@ -213,7 +219,7 @@
     },
     {
       "parameters": {},
-      "id": "11111111-0000-0000-0000-000000000012",
+      "id": "11111111-0000-0000-0000-000000000015",
       "name": "→ Alert Notification Here",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
@@ -275,7 +281,7 @@
     },
     "Format Summary": {
       "main": [
-        [{"node": "→ Add Notification Here", "type": "main", "index": 0}]
+        [{"node": "Send Weekly Report", "type": "main", "index": 0}]
       ]
     },
     "Server Down Alert": {
